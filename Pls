@@ -37,7 +37,7 @@ local Tabs = {
     ["Sk8"] = Window:AddTab("Sk8", "zap"),
     ["Action"] = Window:AddTab("Action", "smile"),
     ["Music"] = Window:AddTab("Music", "music"),
-    ["Forsaken+"] = Window:AddTab("Forsaken+", "star"),
+    ["Plus"] = Window:AddTab("Plus", "star"),
     ["Misc"] = Window:AddTab("Misc", "paperclip"),
     ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
 }
@@ -76,7 +76,7 @@ spawn(function()
         end
     end
 end)
-information:AddLabel("Executor : " .. identifyexecutor())
+information:AddLabel("Executor : " .. (identifyexecutor and identifyexecutor() or "Unknown"))
 information:AddLabel("Username : " .. game.Players.LocalPlayer.Name)
 information:AddLabel("User ID : " .. game.Players.LocalPlayer.UserId)
 information:AddLabel("Display Name : " .. game.Players.LocalPlayer.DisplayName)
@@ -744,11 +744,12 @@ local deleteFakeNoli = false
 task.spawn(function()
     while true do
         task.wait(0.2)
-        if not deleteFakeNoli then continue end
-        local killers = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
-        if killers then
-            for _, model in pairs(killers:GetChildren()) do
-                if model:IsA("Model") and model:GetAttribute("IsFakeNoli") == true then model:Destroy() end
+        if deleteFakeNoli then
+            local killers = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
+            if killers then
+                for _, model in pairs(killers:GetChildren()) do
+                    if model:IsA("Model") and model:GetAttribute("IsFakeNoli") == true then model:Destroy() end
+                end
             end
         end
     end
@@ -1327,17 +1328,19 @@ local function fireBlockRemote()
     if not remote then return end
     pcall(function()
         remote:FireServer("UseActorAbility", {"Block"})
+    end)
+    pcall(function()
         remote:FireServer("UseActorAbility", "Block")
     end)
-    local MainUI = LP.PlayerGui:FindFirstChild("MainUI")
-    if MainUI then
-        local AbilityContainer = MainUI:FindFirstChild("AbilityContainer")
-        if AbilityContainer then
-            local BlockBtn = AbilityContainer:FindFirstChild("Block")
-            if BlockBtn then
-                local ok, firesignal = pcall(function() return firesignal end)
-                if ok and firesignal then
-                    pcall(function() firesignal(BlockBtn.MouseButton1Click) end)
+    local okf, fireSignalFn = pcall(function() return firesignal end)
+    if okf and fireSignalFn then
+        local MainUI = LP.PlayerGui:FindFirstChild("MainUI")
+        if MainUI then
+            local AbilityContainer = MainUI:FindFirstChild("AbilityContainer")
+            if AbilityContainer then
+                local BlockBtn = AbilityContainer:FindFirstChild("Block")
+                if BlockBtn then
+                    pcall(function() fireSignalFn(BlockBtn.MouseButton1Click) end)
                 end
             end
         end
@@ -1346,7 +1349,6 @@ end
 
 local function getBlockableAttackType(track)
     if not track or not track.Animation then return nil end
-    local animId = track.Animation.AnimationId or ""
     local animName = track.Animation.Name or ""
     local lowerName = animName:lower()
     for _, attack in ipairs(BlockableAttacks) do
@@ -1357,11 +1359,13 @@ end
 
 local function handleKillerForAutoBlock(Killer)
     if not Killer:IsA("Model") then return end
-    local Humanoid = Killer:FindFirstChildOfClass("Humanoid") or Killer:WaitForChild("Humanoid", 5)
-    local QueryHitbox = Killer:FindFirstChild("QueryHitbox") or Killer:WaitForChild("QueryHitbox", 5)
+    local Humanoid = Killer:FindFirstChildOfClass("Humanoid")
+    local QueryHitbox = Killer:FindFirstChild("QueryHitbox")
     if not Humanoid or not QueryHitbox then return end
     local Animator = Humanoid:FindFirstChildOfClass("Animator")
     if not Animator then return end
+    if Killer:GetAttribute("AutoBlockHooked") then return end
+    Killer:SetAttribute("AutoBlockHooked", true)
     Animator.AnimationPlayed:Connect(function(Track)
         if not AutoBlockEnabled then return end
         if not Players:GetPlayerFromCharacter(Killer) then return end
@@ -1403,9 +1407,9 @@ end
 BlockLeft:AddToggle("AutoBlockToggle", {
     Text = "Auto Block",
     Default = false,
-    Callback = function(state)
-        AutoBlockEnabled = state
-        if state then
+    Callback = function(val)
+        AutoBlockEnabled = val
+        if val then
             getBlockRemote()
             local KillersFolder = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
             if KillersFolder then
@@ -1419,17 +1423,36 @@ BlockLeft:AddToggle("AutoBlockToggle", {
 BlockLeft:AddToggle("ShowBlockHitboxToggle", {
     Text = "Show Detect Hitbox",
     Default = false,
-    Callback = function(state) ShowBlockHitbox = state end
+    Callback = function(val) ShowBlockHitbox = val end
 })
 
-local KillersFolderConn = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
-if KillersFolderConn then
-    KillersFolderConn.ChildAdded:Connect(function(Killer)
-        task.wait(0.5)
-        handleKillerForAutoBlock(Killer)
+do
+    local PlayersFolder = Workspace:FindFirstChild("Players")
+    local KF = PlayersFolder and PlayersFolder:FindFirstChild("Killers")
+    if KF then
+        for _, k in ipairs(KF:GetChildren()) do
+            task.spawn(function() handleKillerForAutoBlock(k) end)
+        end
+        KF.ChildAdded:Connect(function(Killer)
+            task.wait(0.5)
+            handleKillerForAutoBlock(Killer)
+        end)
+    end
+    Workspace.ChildAdded:Connect(function(child)
+        if child.Name == "Players" then
+            local folder = child:FindFirstChild("Killers")
+            if folder then
+                for _, k in ipairs(folder:GetChildren()) do
+                    task.spawn(function() handleKillerForAutoBlock(k) end)
+                end
+                folder.ChildAdded:Connect(function(Killer)
+                    task.wait(0.5)
+                    handleKillerForAutoBlock(Killer)
+                end)
+            end
+        end
     end)
 end
-Workspace:GetPropertyChangedSignal("DistributedGameTime"):Connect(function() end)
 
 BlockRight:AddLabel("Auto Block detects killer attack animations and creates a proximity hitbox to auto-trigger block.")
 
@@ -2180,24 +2203,25 @@ do
     rightGroup:AddButton("Stop Preview", function() pcall(function() previewStop() end) end)
 end
 
-local PlusAutoLeft = Tabs["Forsaken+"]:AddLeftGroupbox("Automation", "zap")
-local PlusFeatureLeft = Tabs["Forsaken+"]:AddLeftGroupbox("Features", "star")
-local PlusVisualLeft = Tabs["Forsaken+"]:AddLeftGroupbox("Visuals", "eye")
-local PlusMiscLeft = Tabs["Forsaken+"]:AddLeftGroupbox("Misc", "sliders")
+local PlusAutoLeft = Tabs["Plus"]:AddLeftGroupbox("Automation", "zap")
+local PlusFeatureLeft = Tabs["Plus"]:AddLeftGroupbox("Features", "star")
+local PlusVisualLeft = Tabs["Plus"]:AddRightGroupbox("Visuals", "eye")
+local PlusMiscLeft = Tabs["Plus"]:AddRightGroupbox("Misc", "sliders")
 
 local PlusAutoBlock = { generator = false, generatorCD = 3, speedUpNear = false, pickup = false, escape = false, escapeCD = 0.5, disarm = false }
 local PlusFeatures = { invincible = false, disableJDTrails = false, disableJDFootprints = false, smallerSpikes = false, allowJump = false, antiSlowness = false, voidRush = false, coolkiddDash = false }
 local PlusVisuals = { disableNoliNPC = false, disable007n7NPC = false }
-local PlusMisc = { extendedZoom = 10, hideInjury = true, disableBlindness = true, deleteRagdolls = false, skyGlitch = false, instantKill = false, disableDamage = false, disableAllOutdated = true }
+local PlusMisc = { extendedZoom = 10, hideInjury = true, disableBlindness = true, deleteRagdolls = false, skyGlitch = false, instantKill = false, disableDamage = false }
 
 local function getNetwork()
     local m = ReplicatedStorage:FindFirstChild("Modules")
     if not m then return nil end
     local n = m:FindFirstChild("Network", true)
     if not n then return nil end
+    if n:IsA("RemoteEvent") then return n end
     if n.Name == "Network" and n:FindFirstChildOfClass("RemoteEvent") then return n:FindFirstChildOfClass("RemoteEvent") end
     local inner = n:FindFirstChild("Network")
-    if inner then return inner:FindFirstChildOfClass("RemoteEvent") end
+    if inner and inner:FindFirstChildOfClass("RemoteEvent") then return inner:FindFirstChildOfClass("RemoteEvent") end
     return n:FindFirstChildOfClass("RemoteEvent")
 end
 
@@ -2212,31 +2236,34 @@ end
 task.spawn(function()
     while true do
         task.wait(0.1)
-        if not PlusAutoBlock.generator then break end
-        local Map = getGameMap()
-        if not Map then continue end
-        local char = LP.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then continue end
-        for _, gen in ipairs(Map:GetChildren()) do
-            if gen:IsA("Model") and gen.Name:lower():find("generator") then
-                local main = gen:FindFirstChild("Main")
-                local remotes = gen:FindFirstChild("Remotes")
-                local progress = gen:FindFirstChild("Progress")
-                local remoteEvent = remotes and remotes:FindFirstChildOfClass("RemoteEvent")
-                if main and remoteEvent and progress and progress.Value < 100 and (main.Position - root.Position).Magnitude < 6.7 then
-                    local isNear = false
-                    for _, p in ipairs(Players:GetPlayers()) do
-                        if p ~= LP and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-                            if (p.Character.HumanoidRootPart.Position - root.Position).Magnitude < 32 then isNear = true break end
+        if PlusAutoBlock.generator then
+            local Map = getGameMap()
+            if Map then
+                local char = LP.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    for _, gen in ipairs(Map:GetChildren()) do
+                        if gen:IsA("Model") and gen.Name:lower():find("generator") then
+                            local main = gen:FindFirstChild("Main")
+                            local remotes = gen:FindFirstChild("Remotes")
+                            local progress = gen:FindFirstChild("Progress")
+                            local remoteEvent = remotes and remotes:FindFirstChildOfClass("RemoteEvent")
+                            if main and remoteEvent and progress and progress.Value < 100 and (main.Position - root.Position).Magnitude < 6.7 then
+                                local isNear = false
+                                for _, p in ipairs(Players:GetPlayers()) do
+                                    if p ~= LP and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                                        if (p.Character.HumanoidRootPart.Position - root.Position).Magnitude < 32 then isNear = true break end
+                                    end
+                                end
+                                local cd = PlusAutoBlock.generatorCD
+                                if PlusAutoBlock.speedUpNear and not isNear and cd > 2 then cd = 1.5 end
+                                local rand = cd + (math.random() * cd * 0.1 - cd * 0.1)
+                                task.wait(rand)
+                                if PlusAutoBlock.generator and remoteEvent and remoteEvent.Parent then
+                                    pcall(function() remoteEvent:FireServer() end)
+                                end
+                            end
                         end
-                    end
-                    local cd = PlusAutoBlock.generatorCD
-                    if PlusAutoBlock.speedUpNear and not isNear and cd > 2 then cd = 1.5 end
-                    local rand = cd + (math.random() * cd * 0.1 - cd * 0.1)
-                    task.wait(rand)
-                    if PlusAutoBlock.generator and remoteEvent and remoteEvent.Parent then
-                        pcall(function() remoteEvent:FireServer() end)
                     end
                 end
             end
@@ -2247,24 +2274,21 @@ end)
 task.spawn(function()
     while true do
         task.wait(0.3)
-        if not PlusAutoBlock.pickup then continue end
-        local ingame = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Ingame")
-        if not ingame then continue end
-        local char = LP.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then continue end
-        local droppedFolder = ingame.Parent and ingame.Parent:FindFirstChild("DroppedItems")
-        local searchFolders = {ingame}
-        if droppedFolder then table.insert(searchFolders, droppedFolder) end
-        for _, folder in ipairs(searchFolders) do
-            for _, v in ipairs(folder:GetDescendants()) do
-                if v:IsA("Tool") then
-                    local handle = v:FindFirstChildWhichIsA("BasePart")
-                    if handle and (handle.Position - root.Position).Magnitude < 4.5 then
-                        local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
-                        if prompt then
-                            local firePrompt = game:GetService("ProximityPromptService")
-                            pcall(function() prompt:InputHoldBegin(); prompt:InputHoldEnd() end)
+        if PlusAutoBlock.pickup then
+            local ingame = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Ingame")
+            if ingame then
+                local char = LP.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    for _, v in ipairs(ingame:GetDescendants()) do
+                        if v:IsA("Tool") then
+                            local handle = v:FindFirstChildWhichIsA("BasePart")
+                            if handle and (handle.Position - root.Position).Magnitude < 4.5 then
+                                local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
+                                if prompt then
+                                    pcall(function() prompt:InputHoldBegin(); prompt:InputHoldEnd() end)
+                                end
+                            end
                         end
                     end
                 end
@@ -2273,14 +2297,14 @@ task.spawn(function()
     end
 end)
 
-local breakFreeThread = nil
+local breakFreeThreadPlus = nil
 local function startPlusAutoEscape()
-    if breakFreeThread then return end
-    breakFreeThread = task.spawn(function()
+    if breakFreeThreadPlus then return end
+    breakFreeThreadPlus = task.spawn(function()
         while PlusAutoBlock.escape do
             task.wait(PlusAutoBlock.escapeCD + (math.random() * 0.4 - 0.2) * PlusAutoBlock.escapeCD)
             local tui = LP.PlayerGui:FindFirstChild("TemporaryUI")
-            if tui and tui:FindFirstChild("QTE") and tui.QTE.Visible then
+            if tui and tui:FindFirstChild("QTE") then
                 local killers = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
                 if killers then
                     for _, k in ipairs(killers:GetChildren()) do
@@ -2288,7 +2312,10 @@ local function startPlusAutoEscape()
                             local player = Players:GetPlayerFromCharacter(k)
                             if player then
                                 pcall(function()
-                                    ReplicatedStorage.Modules.Network.Network.RemoteEvent:FireServer(player.Name .. "NosHookQTE", {true})
+                                    local net = ReplicatedStorage.Modules.Network.Network
+                                    if net and net.RemoteEvent then
+                                        net.RemoteEvent:FireServer(player.Name .. "NosHookQTE", {true})
+                                    end
                                 end)
                             end
                         end
@@ -2299,23 +2326,24 @@ local function startPlusAutoEscape()
     end)
 end
 local function stopPlusAutoEscape()
-    if breakFreeThread then task.cancel(breakFreeThread); breakFreeThread = nil end
+    if breakFreeThreadPlus then task.cancel(breakFreeThreadPlus); breakFreeThreadPlus = nil end
 end
 
 task.spawn(function()
     while true do
         task.wait(0.15)
-        if not PlusAutoBlock.disarm then continue end
-        local assets = ReplicatedStorage:FindFirstChild("Assets")
-        local azure = assets and assets:FindFirstChild("Killers") and assets.Killers:FindFirstChild("Azure")
-        local qteMod = azure and azure:FindFirstChild("cl_ConstructQTE", true)
-        if qteMod then
-            local ok, Behavior = pcall(require, qteMod)
-            if ok and Behavior and Behavior.new then
-                local upvalues = debug.getupvalues(Behavior.new)
-                for _, value in pairs(upvalues) do
-                    if type(value) == "table" and value.AddProgress then
-                        pcall(function() value:AddProgress(100) end)
+        if PlusAutoBlock.disarm then
+            local assets = ReplicatedStorage:FindFirstChild("Assets")
+            local azure = assets and assets:FindFirstChild("Killers") and assets.Killers:FindFirstChild("Azure")
+            local qteMod = azure and azure:FindFirstChild("cl_ConstructQTE", true)
+            if qteMod then
+                local ok, Behavior = pcall(require, qteMod)
+                if ok and Behavior and Behavior.new then
+                    local upvalues = debug.getupvalues(Behavior.new)
+                    for _, value in pairs(upvalues) do
+                        if type(value) == "table" and value.AddProgress then
+                            pcall(function() value:AddProgress(100) end)
+                        end
                     end
                 end
             end
@@ -2323,10 +2351,7 @@ task.spawn(function()
     end
 end)
 
-local invincibleActive = false
-local function goInvincible(state)
-    invincibleActive = state
-    if not state then return end
+local function goInvincible()
     local char = LP.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     local head = char and char:FindFirstChild("Head")
@@ -2343,32 +2368,29 @@ local function goInvincible(state)
     root.Velocity = Vector3.zero
     head.Anchored = false
     root.CFrame = oldCF
+    hum.CameraOffset = Vector3.zero
 end
 
 task.spawn(function()
     while true do
         task.wait(0.5)
-        if PlusFeatures.invincible then goInvincible(true) end
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        local ingame = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Ingame")
-        if not ingame then continue end
-        for _, v in ipairs(ingame:GetChildren()) do
-            if v:IsA("Folder") and v.Name:find("JohnDoeTrail") then
-                for _, p in ipairs(v:GetChildren()) do
-                    if p:IsA("BasePart") then
-                        p.CanTouch = not PlusFeatures.disableJDTrails
+        if PlusFeatures.disableJDTrails or PlusFeatures.disableJDFootprints then
+            local ingame = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Ingame")
+            if ingame then
+                for _, v in ipairs(ingame:GetChildren()) do
+                    if v:IsA("Folder") and v.Name:find("JohnDoeTrail") then
+                        for _, p in ipairs(v:GetChildren()) do
+                            if p:IsA("BasePart") then
+                                p.CanTouch = not PlusFeatures.disableJDTrails
+                            end
+                        end
                     end
-                end
-            end
-            if v:IsA("Folder") and v.Name:find("Shadows") then
-                for _, p in ipairs(v:GetChildren()) do
-                    if p:IsA("BasePart") then
-                        p.CanTouch = not PlusFeatures.disableJDFootprints
+                    if v:IsA("Folder") and v.Name:find("Shadows") then
+                        for _, p in ipairs(v:GetChildren()) do
+                            if p:IsA("BasePart") then
+                                p.CanTouch = not PlusFeatures.disableJDFootprints
+                            end
+                        end
                     end
                 end
             end
@@ -2379,16 +2401,14 @@ end)
 task.spawn(function()
     while true do
         task.wait(0.5)
-        local ingame = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Ingame")
-        if not ingame then continue end
-        for _, v in ipairs(ingame:GetChildren()) do
-            if v.Name == "SpikeCollision" then
-                if PlusFeatures.smallerSpikes then
-                    v.Size = Vector3.new(11, 3.5, 3.5)
-                    v.Shape = Enum.PartType.Cylinder
-                else
-                    v.Size = Vector3.new(11, 5, 5)
-                    v.Shape = Enum.PartType.Block
+        if PlusFeatures.smallerSpikes then
+            local ingame = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Ingame")
+            if ingame then
+                for _, v in ipairs(ingame:GetChildren()) do
+                    if v.Name == "SpikeCollision" then
+                        v.Size = Vector3.new(11, 3.5, 3.5)
+                        v.Shape = Enum.PartType.Cylinder
+                    end
                 end
             end
         end
@@ -2400,16 +2420,17 @@ task.spawn(function()
         task.wait(0.3)
         local char = LP.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not hum then continue end
-        if PlusFeatures.allowJump then
-            if hum.JumpPower <= 0 and hum:GetAttribute("PlusJumping") ~= true then
-                hum:SetAttribute("PlusJumping", true)
-                hum.JumpPower = 47
-            end
-        else
-            if hum:GetAttribute("PlusJumping") then
-                hum.JumpPower = 0
-                hum:SetAttribute("PlusJumping", nil)
+        if hum then
+            if PlusFeatures.allowJump then
+                if hum.JumpPower <= 0 and hum:GetAttribute("PlusJumping") ~= true then
+                    hum:SetAttribute("PlusJumping", true)
+                    hum.JumpPower = 47
+                end
+            else
+                if hum:GetAttribute("PlusJumping") then
+                    hum.JumpPower = 0
+                    hum:SetAttribute("PlusJumping", nil)
+                end
             end
         end
     end
@@ -2418,16 +2439,18 @@ end)
 task.spawn(function()
     while true do
         task.wait(0.5)
-        if not PlusFeatures.antiSlowness then continue end
-        local char = LP.Character
-        local sm = char and char:FindFirstChild("SpeedMultipliers")
-        if not sm then continue end
-        for _, v in ipairs(sm:GetChildren()) do
-            if v:IsA("NumberValue") and v.Name ~= "Sprinting" then
-                if v.Name == "DirectionalMovement" or v.Name == "FixingGenerator" or v.Name:upper() == "ENRAGED" then
-                    if v.Value < 1 then v.Value = 1 end
-                elseif v.Value > 0.05 and v.Value < 1 then
-                    v:Destroy()
+        if PlusFeatures.antiSlowness then
+            local char = LP.Character
+            local sm = char and char:FindFirstChild("SpeedMultipliers")
+            if sm then
+                for _, v in ipairs(sm:GetChildren()) do
+                    if v:IsA("NumberValue") and v.Name ~= "Sprinting" then
+                        if v.Name == "DirectionalMovement" or v.Name == "FixingGenerator" or v.Name:upper() == "ENRAGED" then
+                            if v.Value < 1 then v.Value = 1 end
+                        elseif v.Value > 0.05 and v.Value < 1 then
+                            v:Destroy()
+                        end
+                    end
                 end
             end
         end
@@ -2437,13 +2460,15 @@ end)
 task.spawn(function()
     while true do
         task.wait(0.2)
-        if not PlusVisuals.disableNoliNPC then continue end
-        local killers = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
-        if not killers then continue end
-        for _, v in ipairs(killers:GetChildren()) do
-            if v.Name:lower() == "noli" and not Players:GetPlayerFromCharacter(v) then
-                if v.Parent ~= Lighting then
-                    pcall(function() v.Parent = Lighting end)
+        if PlusVisuals.disableNoliNPC then
+            local killers = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
+            if killers then
+                for _, v in ipairs(killers:GetChildren()) do
+                    if v.Name:lower() == "noli" and not Players:GetPlayerFromCharacter(v) then
+                        if v.Parent ~= Lighting then
+                            pcall(function() v.Parent = Lighting end)
+                        end
+                    end
                 end
             end
         end
@@ -2453,32 +2478,12 @@ end)
 task.spawn(function()
     while true do
         task.wait(0.2)
-        if not PlusVisuals.disable007n7NPC then continue end
-        local ingame = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Ingame")
-        if not ingame then continue end
-        for _, v in ipairs(ingame:GetChildren()) do
-            if v.Name:lower() == "007n7" and not Players:GetPlayerFromCharacter(v) then
-                pcall(function() v.Parent = Lighting end)
-            end
-        end
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        local char = LP.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not hum then continue end
-        for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
-            local id = track.Animation and track.Animation.AnimationId and track.Animation.AnimationId:match("%d+")
-            if id == "113403615979705" and PlusFeatures.voidRush then
-                local cam = Workspace.CurrentCamera
-                if cam and hum.MoveDirection.Magnitude > 0 then
-                    local dir = hum.MoveDirection
-                    local root = char:FindFirstChild("HumanoidRootPart")
-                    if root then
-                        root.CFrame = CFrame.new(root.Position, root.Position + Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z).Unit)
+        if PlusVisuals.disable007n7NPC then
+            local ingame = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Ingame")
+            if ingame then
+                for _, v in ipairs(ingame:GetChildren()) do
+                    if v.Name:lower() == "007n7" and not Players:GetPlayerFromCharacter(v) then
+                        pcall(function() v.Parent = Lighting end)
                     end
                 end
             end
@@ -2489,21 +2494,48 @@ end)
 task.spawn(function()
     while true do
         task.wait(0.1)
-        if not PlusFeatures.coolkiddDash then continue end
-        local char = LP.Character
-        if not char or not char.Name:gsub("0", "O"):lower():find("coolkid") then continue end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then continue end
-        for _, lv in ipairs(root:GetChildren()) do
-            if lv:IsA("LinearVelocity") then
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                local dir = hum and hum.MoveDirection or Vector3.zero
-                if dir.Magnitude > 0.1 then
-                    lv.LineDirection = dir
-                else
-                    local cam = Workspace.CurrentCamera
-                    if cam then
-                        lv.LineDirection = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z).Unit
+        if PlusFeatures.coolkiddDash then
+            local char = LP.Character
+            if char and char.Name:gsub("0", "O"):lower():find("coolkid") then
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    for _, lv in ipairs(root:GetChildren()) do
+                        if lv:IsA("LinearVelocity") then
+                            local hum = char:FindFirstChildOfClass("Humanoid")
+                            local dir = hum and hum.MoveDirection or Vector3.zero
+                            if dir.Magnitude > 0.1 then
+                                lv.LineDirection = dir
+                            else
+                                local cam = Workspace.CurrentCamera
+                                if cam then
+                                    lv.LineDirection = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z).Unit
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if PlusFeatures.voidRush then
+            local char = LP.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                    local id = track.Animation and track.Animation.AnimationId and track.Animation.AnimationId:match("%d+")
+                    if id == "113403615979705" then
+                        local root = char:FindFirstChild("HumanoidRootPart")
+                        if root then
+                            local cam = Workspace.CurrentCamera
+                            if cam then
+                                root.CFrame = CFrame.new(root.Position, root.Position + Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z).Unit)
+                            end
+                        end
                     end
                 end
             end
@@ -2562,11 +2594,7 @@ PlusFeatureLeft:AddToggle("PlusInvincible", {
     Callback = function(v)
         PlusFeatures.invincible = v
         if v then
-            pcall(function()
-                Workspace:SetAttribute("Invincible", true)
-                task.delay(1.5, function() Workspace:SetAttribute("Invincible", nil) end)
-            end)
-            goInvincible(true)
+            task.spawn(goInvincible)
         end
     end
 })
@@ -2629,7 +2657,7 @@ PlusMiscLeft:AddSlider("PlusExtendedZoom", {
     end
 })
 PlusMiscLeft:AddToggle("PlusHideInjury", {
-    Text = "Hide Injured UI/Effects",
+    Text = "Hide Injured UI",
     Default = true,
     Callback = function(v)
         PlusMisc.hideInjury = v
@@ -2681,37 +2709,43 @@ PlusMiscLeft:AddToggle("PlusInstantKill", {
     Text = "Instant Kill (Host)",
     Default = false,
     Callback = function(v)
-        if not v then return end
-        local net = getNetwork()
-        if not net then return end
-        task.spawn(function()
-            while PlusMisc.instantKill do
-                pcall(function()
-                    net:FireServer("ExecuteCommand", {"GiveStatus", LP.Name, "Weakness", -1e11, 1})
-                end)
-                task.wait(0.5)
-            end
-        end)
+        PlusMisc.instantKill = v
+        if v then
+            task.spawn(function()
+                while PlusMisc.instantKill do
+                    local net = getNetwork()
+                    if net then
+                        pcall(function()
+                            net:FireServer("ExecuteCommand", {"GiveStatus", LP.Name, "Weakness", -1e11, 1})
+                        end)
+                    end
+                    task.wait(0.5)
+                end
+            end)
+        end
     end
 })
 PlusMiscLeft:AddToggle("PlusDisableDamage", {
     Text = "Disable Damage (Host)",
     Default = false,
     Callback = function(v)
-        if not v then return end
-        local net = getNetwork()
-        if not net then return end
-        task.spawn(function()
-            while PlusMisc.disableDamage do
-                for _, p in ipairs(Players:GetPlayers()) do
-                    if p.UserId == LP.UserId and PlusMisc.instantKill then continue end
-                    pcall(function()
-                        net:FireServer("ExecuteCommand", {"GiveStatus", p.Name, "Strength", -1e11, 2})
-                    end)
+        PlusMisc.disableDamage = v
+        if v then
+            task.spawn(function()
+                while PlusMisc.disableDamage do
+                    local net = getNetwork()
+                    if net then
+                        for _, p in ipairs(Players:GetPlayers()) do
+                            if p.UserId == LP.UserId and PlusMisc.instantKill then continue end
+                            pcall(function()
+                                net:FireServer("ExecuteCommand", {"GiveStatus", p.Name, "Strength", -1e11, 2})
+                            end)
+                        end
+                    end
+                    task.wait(1.5)
                 end
-                task.wait(1.5)
-            end
-        end)
+            end)
+        end
     end
 })
 
@@ -2754,11 +2788,11 @@ ImpersonateGroup:AddInput("VictimInput", { Default = victimName, Numeric = false
 ImpersonateGroup:AddButton({ Text = "Impersonate Player", Func = function()
     if victimName == "" then Library:Notify({Title = "Error", Description = "Please enter a victim name", Time = 3}); return end
     pcall(function()
-        local HttpService = game:GetService("HttpService")
+        local HttpServiceLocal = game:GetService("HttpService")
         local localPlayer = LP
         local function getUserIdByUsername(username)
             local success, result = pcall(function() return game:HttpGet("https://users.roblox.com/v1/users/search?keyword=" .. username, true) end)
-            if success then local data = HttpService:JSONDecode(result) if data and data.data and #data.data > 0 then return data.data[1].id, data.data[1].name, data.data[1].displayName end end
+            if success then local data = HttpServiceLocal:JSONDecode(result) if data and data.data and #data.data > 0 then return data.data[1].id, data.data[1].name, data.data[1].displayName end end
             return nil, nil, nil
         end
         local userId, userName, displayName = getUserIdByUsername(victimName)
@@ -2797,7 +2831,7 @@ ImpersonateGroup:AddButton({ Text = "Impersonate Player", Func = function()
                 applyCharacterAppearance(character, userId)
             end
         end)
-        Library:Notify({Title = "Success", Description = string.format("Changed name to: %s\nand applied %s's outfit", displayName, victimName), Time = 3})
+        Library:Notify({Title = "Success", Description = string.format("Changed name to: %s", displayName), Time = 3})
     end)
 end, DoubleClick = false, Tooltip = "Click to apply victim's name and outfit to your character" })
 local ffEnabled = false
@@ -2936,4 +2970,4 @@ ThemeManager:ApplyToTab(Tabs["UI Settings"])
 SaveManager:LoadAutoloadConfig()
 Library:OnUnload(function() print("Unloaded!") end)
 
-Library:Notify({Title = "Chituk Hub + Plus", Description = "Successfully loaded with Forsaken+ features!", Time = 5})
+Library:Notify({Title = "Chituk Hub + Plus", Description = "Successfully loaded with Plus features!", Time = 5})
