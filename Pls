@@ -1199,7 +1199,6 @@ BlockLeft:AddToggle("AutoBlockToggle", { Text = "Auto Block", Default = false, C
     AutoBlockEnabled = state
 end })
 local BlockRight = Tabs.Block:AddRightGroupbox("Info", "info")
-BlockRight:AddLabel("Uses Guest1337 Auto Block logic from Forsaken Plus.")
 BlockRight:AddLabel("Requires good ping to work properly.")
 
 local TARGET_ANIMATION_ID = "100725497418533"
