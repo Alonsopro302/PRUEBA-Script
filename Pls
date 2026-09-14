@@ -34,7 +34,7 @@ local okLib, errLib = pcall(function()
     Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
 end)
 if not okLib or not Library then
-    warn("[Chituk Hub] No se pudo cargar Obsidian Library:", errLib)
+    warn("[Chituk Hub] Failed to load Obsidian Library:", errLib)
     return
 end
 
@@ -59,7 +59,7 @@ local Window = Library:CreateWindow({
 })
 
 pcall(function()
-    Library:Notify({ Title = "Chituk Hub", Description = "Menu cargado correctamente", Time = 3 })
+    Library:Notify({ Title = "Chituk Hub", Description = "Menu loaded successfully", Time = 3 })
 end)
 
 local Tabs = {
@@ -75,6 +75,7 @@ local Tabs = {
     ["Action"] = Window:AddTab("Action", "smile"),
     ["Music"] = Window:AddTab("Music", "music"),
     ["Automation"] = Window:AddTab("Automation", "settings"),
+    ["Auto Farm"] = Window:AddTab("Auto Farm", "settings"),
     ["Features"] = Window:AddTab("Features", "zap"),
     ["Misc"] = Window:AddTab("Misc", "paperclip"),
     ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
@@ -145,6 +146,7 @@ local DummyNames = {
 local ObjectESPData = {}
 local PlayerESPData = {}
 local TracerData = {}
+local TracerOriginAttachment = nil
 local ESPSettings = {
     generatorESP = false, itemESP = false, pizzaEsp = false, pizzaDeliveryEsp = false,
     zombieEsp = false, taphTripwireEsp = false, tripMineEsp = false, twoTimeRespawnEsp = false,
@@ -198,56 +200,109 @@ local function GetGeneratorPart(model)
     for _, v in ipairs(model:GetDescendants()) do if v:IsA("BasePart") then return v end end
     return nil
 end
+
+local function GetTracerOrigin()
+    local char = LP.Character
+    if not char then return nil end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    if TracerOriginAttachment and TracerOriginAttachment.Parent == hrp then
+        return TracerOriginAttachment
+    end
+    TracerOriginAttachment = hrp:FindFirstChild("ChitukHub_TracerOrigin")
+    if not TracerOriginAttachment then
+        TracerOriginAttachment = Instance.new("Attachment")
+        TracerOriginAttachment.Name = "ChitukHub_TracerOrigin"
+        TracerOriginAttachment.Position = Vector3.new(0, 12, 0)
+        TracerOriginAttachment.Parent = hrp
+    end
+    return TracerOriginAttachment
+end
+
 local function getTracerFor(model)
     for _, t in ipairs(TracerData) do if t.model == model then return t end end
     return nil
 end
+
 local function createTracer(model, color)
     if not model then return end
-    local targetPart = model:IsA("BasePart") and model or model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+    local existing = getTracerFor(model)
+    if existing then
+        if existing.beam and existing.beam.Parent then
+            existing.beam.Color = ColorSequence.new(color)
+            existing.color = color
+        end
+        return
+    end
+    local targetPart = model:FindFirstChild("Head")
+        or (model:IsA("BasePart") and model)
+        or model:FindFirstChild("HumanoidRootPart")
+        or model.PrimaryPart
+        or model:FindFirstChildWhichIsA("BasePart", true)
     if not targetPart then return end
-    local att0 = Instance.new("Attachment")
-    att0.Name = "ChitukHub_TracerStart"
+    local origin = GetTracerOrigin()
+    if not origin then return end
     local att1 = Instance.new("Attachment")
     att1.Name = "ChitukHub_TracerEnd"
-    att0.Parent = targetPart
     att1.Parent = targetPart
     local beam = Instance.new("Beam")
     beam.Name = "ChitukHub_Tracer"
-    beam.Attachment0 = att0
+    beam.Attachment0 = origin
     beam.Attachment1 = att1
     beam.Color = ColorSequence.new(color)
-    beam.Width0 = 0.08
-    beam.Width1 = 0.08
+    beam.Width0 = 0.35
+    beam.Width1 = 0.35
     beam.FaceCamera = true
     beam.Transparency = NumberSequence.new(0)
     beam.LightEmission = 1
+    beam.Segments = 1
     beam.Parent = targetPart
-    table.insert(TracerData, { model = model, part = targetPart, att0 = att0, att1 = att1, beam = beam })
+    table.insert(TracerData, { model = model, part = targetPart, att0 = origin, att1 = att1, beam = beam, color = color })
 end
+
 local function removeTracer(model)
     for i = #TracerData, 1, -1 do
         if TracerData[i].model == model then
             pcall(function()
                 if TracerData[i].beam then TracerData[i].beam:Destroy() end
-                if TracerData[i].att0 then TracerData[i].att0:Destroy() end
                 if TracerData[i].att1 then TracerData[i].att1:Destroy() end
             end)
             table.remove(TracerData, i)
         end
     end
 end
+
 local function updateTracers()
-    local cam = Workspace.CurrentCamera
-    if not cam then return end
-    local origin = cam.CFrame.Position - cam.CFrame.LookVector * 2
+    local origin = GetTracerOrigin()
+    if not origin then return end
     for _, t in ipairs(TracerData) do
-        if t.att0 and t.att0.Parent and t.att1 and t.att1.Parent then
-            t.att0.WorldPosition = origin
-            t.att1.WorldPosition = t.part.Position
+        if t.beam and t.beam.Parent then
+            if t.beam.Attachment0 ~= origin then
+                t.beam.Attachment0 = origin
+                t.att0 = origin
+            end
         end
     end
 end
+
+local function updateTracerColors()
+    for _, t in ipairs(TracerData) do
+        if t.beam and t.beam.Parent and t.model and t.model.Parent then
+            local parentName = t.model.Parent and t.model.Parent.Name
+            local desired
+            if parentName == "Killers" then
+                desired = ESPSettings.killerColor
+            elseif parentName == "Survivors" then
+                desired = ESPSettings.survivorColor
+            end
+            if desired and t.color ~= desired then
+                t.beam.Color = ColorSequence.new(desired)
+                t.color = desired
+            end
+        end
+    end
+end
+
 local function createPlayerESP(model, color, isKiller)
     if model:FindFirstChild("ChitukHub_Highlight") then return end
     if IsRagdoll(model) then return end
@@ -555,6 +610,7 @@ local function UpdateESP()
 end
 task.spawn(function() while task.wait(0.5) do pcall(UpdateESP) end end)
 task.spawn(function() while task.wait() do pcall(updateTracers) end end)
+task.spawn(function() while task.wait(0.25) do pcall(updateTracerColors) end end)
 
 local KillerGroup = Tabs.ESP:AddLeftGroupbox("Killer", "user")
 local SurvivorGroup = Tabs.ESP:AddLeftGroupbox("Survivor", "user")
@@ -2602,6 +2658,329 @@ AutoRight:AddToggle("AutoDisarm", { Text = "Auto Disarm", Default = false, Callb
     autoDisarmEnabled = v
     if v and CurrentQTEAzure then CurrentQTEAzure:AddProgress(100); CurrentQTEAzure = nil end
 end })
+end)
+
+task.spawn(function()
+local FarmReplicatedStorage = ReplicatedStorage
+local FarmHttpService = HttpService
+local FarmTeleportService = game:GetService("TeleportService")
+
+local FarmConfig = {
+    AutoFarm = false,
+    TargetGens = 5,
+    GenWaitTime = 3,
+    GenCooldown = 8,
+    ServerHop = false,
+    SmallServerHop = false,
+}
+
+local FarmStats = {
+    Fixed = 0,
+    StartTime = os.clock(),
+}
+
+local farmRunning = false
+local farmDeathConnection = nil
+local farmLastGenUsed = {}
+local farmStallCount = 0
+local farmLastActionTime = os.clock()
+
+local function FarmGetGenerators()
+    local gens = {}
+    local seen = {}
+    local Map = workspace:FindFirstChild("Map")
+    if Map then
+        local Ingame = Map:FindFirstChild("Ingame")
+        if Ingame then
+            local Map2 = Ingame:FindFirstChild("Map")
+            if Map2 then
+                for _, child in ipairs(Map2:GetChildren()) do
+                    if child.Name == "Generator" and child:IsA("Model") then
+                        local Progress = child:FindFirstChild("Progress")
+                        local Remotes = child:FindFirstChild("Remotes")
+                        local Positions = child:FindFirstChild("Positions")
+                        local Main = child:FindFirstChild("Main")
+                        if Progress and Remotes and child.PrimaryPart then
+                            local position = nil
+                            if Positions then
+                                local center = Positions:FindFirstChild("Center")
+                                if center then position = center.Position end
+                            end
+                            if not position and Main then
+                                local prompt = Main:FindFirstChild("Prompt")
+                                if prompt and prompt:IsA("ProximityPrompt") then
+                                    local attach = prompt:FindFirstChildOfClass("Attachment")
+                                    if attach then position = attach.WorldCFrame.Position end
+                                end
+                            end
+                            if not position and Main then
+                                for _, part in ipairs(Main:GetChildren()) do
+                                    if part:IsA("BasePart") then
+                                        position = part.Position + Vector3.new(0, 3, 0)
+                                        break
+                                    end
+                                end
+                            end
+                            if not position then
+                                position = child.PrimaryPart.Position + Vector3.new(0, 5, 0)
+                            end
+                            local uid = child:GetDebugId()
+                            if not seen[uid] then
+                                seen[uid] = true
+                                table.insert(gens, {
+                                    Model = child,
+                                    Progress = Progress,
+                                    RF = Remotes:FindFirstChild("RF"),
+                                    RE = Remotes:FindFirstChild("RE"),
+                                    Prompt = Main and Main:FindFirstChild("Prompt"),
+                                    Position = position,
+                                    GenPosition = child.PrimaryPart.Position,
+                                    UID = uid,
+                                })
+                            end
+                        end
+                    end
+                end
+                return gens
+            end
+        end
+    end
+    for _, inst in ipairs(workspace:GetDescendants()) do
+        if inst:IsA("Model") and inst.Name == "Generator" then
+            local Progress = inst:FindFirstChild("Progress")
+            local Remotes = inst:FindFirstChild("Remotes")
+            if Progress and Remotes and inst.PrimaryPart then
+                local uid = inst:GetDebugId()
+                if not seen[uid] then
+                    seen[uid] = true
+                    local position = inst.PrimaryPart.Position + Vector3.new(0, 5, 0)
+                    table.insert(gens, {
+                        Model = inst,
+                        Progress = Progress,
+                        RF = Remotes:FindFirstChild("RF"),
+                        RE = Remotes:FindFirstChild("RE"),
+                        Prompt = nil,
+                        Position = position,
+                        GenPosition = inst.PrimaryPart.Position,
+                        UID = uid,
+                    })
+                end
+            end
+        end
+    end
+    return gens
+end
+
+local function FarmSortGens(gens)
+    table.sort(gens, function(a, b)
+        local timeA = farmLastGenUsed[a.UID] or 0
+        local timeB = farmLastGenUsed[b.UID] or 0
+        return timeA < timeB
+    end)
+    return gens
+end
+
+local function FarmIsOnCooldown(gen)
+    local lastUse = farmLastGenUsed[gen.UID]
+    if not lastUse then return false end
+    return (os.clock() - lastUse) < FarmConfig.GenCooldown
+end
+
+local function FarmFixGenerator(gen)
+    if not gen.Model or not gen.Model.Parent then return false end
+    if gen.Progress.Value >= 100 then return true end
+    local character = LP.Character
+    if not character then return false end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return false end
+    local success = pcall(function()
+        rootPart.CFrame = CFrame.new(gen.Position + Vector3.new(0, 2, 0))
+    end)
+    if not success then return false end
+    task.wait(0.2)
+    pcall(function() gen.RF:InvokeServer("Enter") end)
+    task.wait(0.12)
+    pcall(function() gen.RE:FireServer() end)
+    task.wait(0.12)
+    task.spawn(function() pcall(function() gen.RF:InvokeServer("Leave") end) end)
+    farmLastGenUsed[gen.UID] = os.clock()
+    return true
+end
+
+local function FarmServerHop(small)
+    local placeId = game.PlaceId
+    local success = pcall(function()
+        if small then
+            local servers = {}
+            local cursor = nil
+            for i = 1, 3 do
+                local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?limit=100", placeId)
+                if cursor then url = url .. "&cursor=" .. cursor end
+                local ok, data = pcall(function()
+                    return FarmHttpService:JSONDecode(game:HttpGet(url))
+                end)
+                if ok and data and data.data then
+                    for _, s in ipairs(data.data) do
+                        if s.playing and s.maxPlayers and s.playing < s.maxPlayers and s.playing > 0 then
+                            table.insert(servers, s)
+                        end
+                    end
+                    cursor = data.nextPageCursor
+                    if not cursor then break end
+                else
+                    break
+                end
+            end
+            if #servers > 0 then
+                table.sort(servers, function(a, b) return a.playing < b.playing end)
+                local topCount = math.min(8, #servers)
+                local target = servers[math.random(1, topCount)]
+                FarmTeleportService:TeleportToPlaceInstance(placeId, target.id, LP)
+                return true
+            end
+        end
+        FarmTeleportService:Teleport(placeId, LP)
+        return true
+    end)
+    return success
+end
+
+local function FarmStart()
+    if farmRunning then return end
+    farmRunning = true
+    FarmStats.Fixed = 0
+    FarmStats.StartTime = os.clock()
+    farmLastGenUsed = {}
+    farmStallCount = 0
+    farmLastActionTime = os.clock()
+    while farmRunning do
+        task.wait(0.1)
+        if os.clock() - farmLastActionTime > 45 then
+            farmStallCount = farmStallCount + 1
+            farmLastActionTime = os.clock()
+            if farmStallCount >= 3 then
+                farmRunning = false
+                break
+            end
+        end
+        local character = LP.Character
+        if character and character.Parent then
+            local parentName = character.Parent.Name
+            if parentName == "Survivors" or parentName == "Killers" then
+                if not farmDeathConnection then
+                    local humanoid = character:FindFirstChildOfClass("Humanoid")
+                    if humanoid then
+                        farmDeathConnection = humanoid.Died:Connect(function()
+                            if farmRunning then farmRunning = false end
+                        end)
+                    end
+                end
+                local gens = FarmGetGenerators()
+                local totalGens = #gens
+                if totalGens == 0 then
+                    task.wait(0.5)
+                    continue
+                end
+                farmLastActionTime = os.clock()
+                local doneGens = 0
+                local availableGens = {}
+                for _, gen in ipairs(gens) do
+                    if gen.Progress.Value >= 100 then
+                        doneGens = doneGens + 1
+                    elseif not FarmIsOnCooldown(gen) then
+                        table.insert(availableGens, gen)
+                    end
+                end
+                if totalGens > 0 and doneGens >= totalGens then
+                    farmRunning = false
+                    if FarmConfig.ServerHop or FarmConfig.SmallServerHop then
+                        task.wait(1.5)
+                        FarmServerHop(FarmConfig.SmallServerHop)
+                    end
+                    break
+                end
+                if totalGens > 0 and doneGens >= FarmConfig.TargetGens then
+                    farmRunning = false
+                    break
+                end
+                if #availableGens > 0 then
+                    FarmSortGens(availableGens)
+                    for _, gen in ipairs(availableGens) do
+                        if not farmRunning then break end
+                        local char = LP.Character
+                        if not char or not char.Parent then break end
+                        local hum = char:FindFirstChildOfClass("Humanoid")
+                        if not hum or hum.Health <= 0 then break end
+                        if gen.Progress.Value < 100 and gen.Model and gen.Model.Parent then
+                            if FarmFixGenerator(gen) then
+                                FarmStats.Fixed = FarmStats.Fixed + 1
+                                farmLastActionTime = os.clock()
+                                task.wait(FarmConfig.GenWaitTime)
+                            end
+                        end
+                    end
+                else
+                    task.wait(0.5)
+                end
+            else
+                if farmDeathConnection then farmDeathConnection:Disconnect(); farmDeathConnection = nil end
+                task.wait(1)
+            end
+        else
+            if farmDeathConnection then farmDeathConnection:Disconnect(); farmDeathConnection = nil end
+            task.wait(1)
+        end
+    end
+    if farmDeathConnection then farmDeathConnection:Disconnect(); farmDeathConnection = nil end
+end
+
+local function FarmStop()
+    farmRunning = false
+    if farmDeathConnection then
+        farmDeathConnection:Disconnect()
+        farmDeathConnection = nil
+    end
+end
+
+local FarmLeft = Tabs["Auto Farm"]:AddLeftGroupbox("Auto Farm", "settings")
+local FarmRight = Tabs["Auto Farm"]:AddRightGroupbox("Statistics", "bar-chart")
+local FarmOptions = Tabs["Auto Farm"]:AddRightGroupbox("Options", "sliders")
+
+FarmLeft:AddToggle("AutoFarmEnabled", { Text = "Enable Auto Farm", Default = false, Callback = function(v)
+    FarmConfig.AutoFarm = v
+    if v then
+        task.spawn(FarmStart)
+    else
+        FarmStop()
+    end
+end })
+FarmLeft:AddSlider("AutoFarmTargetGens", { Text = "Target Generators", Default = 5, Min = 1, Max = 10, Rounding = 0, Callback = function(v) FarmConfig.TargetGens = v end })
+FarmLeft:AddSlider("AutoFarmWaitTime", { Text = "Generator Wait Time (s)", Default = 3, Min = 0, Max = 15, Rounding = 1, Callback = function(v) FarmConfig.GenWaitTime = v end })
+FarmLeft:AddSlider("AutoFarmCooldown", { Text = "Generator Cooldown (s)", Default = 8, Min = 0, Max = 30, Rounding = 1, Callback = function(v) FarmConfig.GenCooldown = v end })
+FarmOptions:AddToggle("AutoFarmServerHop", { Text = "Server Hop After Complete", Default = false, Callback = function(v) FarmConfig.ServerHop = v end })
+FarmOptions:AddToggle("AutoFarmSmallHop", { Text = "Small Server Hop", Default = false, Callback = function(v) FarmConfig.SmallServerHop = v end })
+
+local farmStatLabel = FarmRight:AddLabel("Generators Fixed: 0")
+local farmTimeLabel = FarmRight:AddLabel("Elapsed: 00:00")
+local farmStatusLabel = FarmRight:AddLabel("Status: Idle")
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if farmRunning then
+            if farmStatLabel and farmStatLabel.SetText then farmStatLabel:SetText("Generators Fixed: " .. FarmStats.Fixed) end
+            local elapsed = os.clock() - FarmStats.StartTime
+            local mins = math.floor(elapsed / 60)
+            local secs = math.floor(elapsed % 60)
+            if farmTimeLabel and farmTimeLabel.SetText then farmTimeLabel:SetText(string.format("Elapsed: %02d:%02d", mins, secs)) end
+            if farmStatusLabel and farmStatusLabel.SetText then farmStatusLabel:SetText("Status: Farming") end
+        else
+            if farmStatusLabel and farmStatusLabel.SetText then farmStatusLabel:SetText("Status: Idle") end
+        end
+    end
+end)
 end)
 
 task.spawn(function()
