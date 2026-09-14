@@ -79,6 +79,14 @@ local Tabs = {
     ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
 }
 
+local PlayersFolder = Workspace:FindFirstChild("Players")
+local KillersFolder = PlayersFolder and PlayersFolder:FindFirstChild("Killers")
+local SurvivorsFolder = PlayersFolder and PlayersFolder:FindFirstChild("Survivors")
+local RagdollsFolder = Workspace:FindFirstChild("Ragdolls")
+local HitboxesFolder = Workspace:FindFirstChild("Hitboxes") or Workspace
+local InGame = Workspace:FindFirstChild("Map") and Workspace:FindFirstChild("Map"):FindFirstChild("Ingame")
+local GameMap = InGame and InGame:FindFirstChild("Map")
+
 task.spawn(function()
 
 local information = Tabs["Player Info"]:AddLeftGroupbox("Player", "user")
@@ -135,6 +143,7 @@ local DummyNames = {
 }
 local ObjectESPData = {}
 local PlayerESPData = {}
+local TracerData = {}
 local ESPSettings = {
     generatorESP = false, itemESP = false, pizzaEsp = false, pizzaDeliveryEsp = false,
     zombieEsp = false, taphTripwireEsp = false, tripMineEsp = false, twoTimeRespawnEsp = false,
@@ -150,6 +159,12 @@ local ESPSettings = {
     killerColor = Color3.fromRGB(255, 100, 100), survivorColor = Color3.fromRGB(100, 255, 100),
     killerFillTransparency = 0.7, killerOutlineTransparency = 0.3,
     survivorFillTransparency = 0.7, survivorOutlineTransparency = 0.3,
+    generatorTracers = false, itemTracers = false, pizzaTracers = false, pizzaDeliveryTracers = false,
+    zombieTracers = false, taphTripwireTracers = false, tripMineTracers = false, twoTimeRespawnTracers = false,
+    killerTracers = false, survivorTracers = false,
+    showGeneratorName = true, showItemName = true, showPizzaName = true, showPizzaDeliveryName = true,
+    showZombieName = true, showTaphTripwireName = true, showTripMineName = true, showTwoTimeRespawnName = true,
+    showGraffitiName = true,
     azureGroundBulbESP = false,
     azureVineESP = false,
     azureGroundBulbColor = Color3.fromRGB(0, 255, 200),
@@ -181,6 +196,56 @@ local function GetGeneratorPart(model)
     for _, v in ipairs(model:GetDescendants()) do if v:IsA("BasePart") and v.Name:lower():find("cube") then return v end end
     for _, v in ipairs(model:GetDescendants()) do if v:IsA("BasePart") then return v end end
     return nil
+end
+local function getTracerFor(model)
+    for _, t in ipairs(TracerData) do if t.model == model then return t end end
+    return nil
+end
+local function createTracer(model, color)
+    if not model then return end
+    local targetPart = model:IsA("BasePart") and model or model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+    if not targetPart then return end
+    local att0 = Instance.new("Attachment")
+    att0.Name = "ChitukHub_TracerStart"
+    local att1 = Instance.new("Attachment")
+    att1.Name = "ChitukHub_TracerEnd"
+    att0.Parent = targetPart
+    att1.Parent = targetPart
+    local beam = Instance.new("Beam")
+    beam.Name = "ChitukHub_Tracer"
+    beam.Attachment0 = att0
+    beam.Attachment1 = att1
+    beam.Color = ColorSequence.new(color)
+    beam.Width0 = 0.08
+    beam.Width1 = 0.08
+    beam.FaceCamera = true
+    beam.Transparency = NumberSequence.new(0)
+    beam.LightEmission = 1
+    beam.Parent = targetPart
+    table.insert(TracerData, { model = model, part = targetPart, att0 = att0, att1 = att1, beam = beam })
+end
+local function removeTracer(model)
+    for i = #TracerData, 1, -1 do
+        if TracerData[i].model == model then
+            pcall(function()
+                if TracerData[i].beam then TracerData[i].beam:Destroy() end
+                if TracerData[i].att0 then TracerData[i].att0:Destroy() end
+                if TracerData[i].att1 then TracerData[i].att1:Destroy() end
+            end)
+            table.remove(TracerData, i)
+        end
+    end
+end
+local function updateTracers()
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    local origin = cam.CFrame.Position - cam.CFrame.LookVector * 2
+    for _, t in ipairs(TracerData) do
+        if t.att0 and t.att0.Parent and t.att1 and t.att1.Parent then
+            t.att0.WorldPosition = origin
+            t.att1.WorldPosition = t.part.Position
+        end
+    end
 end
 local function createPlayerESP(model, color, isKiller)
     if model:FindFirstChild("ChitukHub_Highlight") then return end
@@ -231,13 +296,19 @@ local function createPlayerESP(model, color, isKiller)
         local displayName = m:GetAttribute("ActorDisplayName") or (isK and "KILLER" or "SURVIVOR")
         local skinName = m:GetAttribute("SkinNameDisplay")
         local text = displayName
+        if isK and not ESPSettings.killerNameESP then text = "" end
+        if (not isK) and not ESPSettings.survivorNameESP then text = "" end
         if (isK and ESPSettings.killerSkinESP) or (not isK and ESPSettings.survivorSkinESP) then
-            if skinName and skinName ~= "" then text = text .. " | " .. skinName end
+            if skinName and skinName ~= "" then text = text ~= "" and (text .. " | " .. skinName) or skinName end
         end
         nameLabel.Text = text
-        local humanoid = m:FindFirstChild("Humanoid")
-        if humanoid then
-            hpLabel.Text = string.format("HP: %d/%d", math.floor(humanoid.Health), math.floor(humanoid.MaxHealth))
+        if (isK and not ESPSettings.killerHealthESP) or ((not isK) and not ESPSettings.survivorHealthESP) then
+            hpLabel.Text = ""
+        else
+            local humanoid = m:FindFirstChild("Humanoid")
+            if humanoid then
+                hpLabel.Text = string.format("HP: %d/%d", math.floor(humanoid.Health), math.floor(humanoid.MaxHealth))
+            end
         end
         if highlight and highlight.Parent then
             if isK then
@@ -265,11 +336,18 @@ local function removePlayerESP(model)
         if model:FindFirstChild("ChitukHub_Billboard") then model.ChitukHub_Billboard:Destroy() end
     end)
 end
-local function CreateObjectESP(model, color, isGenerator, isItem, isPizza, isPizzaDelivery, isZombie, isTaph, isTripMine, isRespawn, isGraffiti, displayText)
+local function CreateObjectESP(model, color, isGenerator, isItem, isPizza, isPizzaDelivery, isZombie, isTaph, isTripMine, isRespawn, isGraffiti, displayText, showName)
     if not model then return end
     if model:FindFirstChild("TAOWARE_Highlight") then return end
     if isGenerator and model:FindFirstChild("Progress") and model.Progress.Value == 100 then return end
     if IsRagdoll(model) then return end
+    if ESPSettings.limitDistance then
+        local rootPart = model:IsA("BasePart") and model or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart", true)
+        if rootPart then
+            local distance = (Camera.CFrame.Position - rootPart.Position).Magnitude
+            if distance > ESPSettings.maxDistance then return end
+        end
+    end
     local targetPart
     if isGenerator then targetPart = GetGeneratorPart(model)
     elseif isItem then targetPart = model:FindFirstChild("ItemRoot")
@@ -300,7 +378,9 @@ local function CreateObjectESP(model, color, isGenerator, isItem, isPizza, isPiz
     local textLabel = Instance.new("TextLabel")
     textLabel.Size = UDim2.new(1, 0, 1, 0)
     textLabel.BackgroundTransparency = 1
-    if displayText then
+    if showName == false then
+        textLabel.Text = ""
+    elseif displayText then
         textLabel.Text = displayText
     else
         local typeAttr = model:GetAttribute("Type")
@@ -329,23 +409,29 @@ local function UpdateESP()
         if killersFolder then
             for _, killer in ipairs(killersFolder:GetChildren()) do
                 if killer == LP.Character then continue end
-                if IsRagdoll(killer) then removePlayerESP(killer); continue end
+                if IsRagdoll(killer) then removePlayerESP(killer); removeTracer(killer); continue end
                 local player = Players:GetPlayerFromCharacter(killer)
-                if not player or IsSpectating(player) then removePlayerESP(killer); continue end
+                if not player or IsSpectating(player) then removePlayerESP(killer); removeTracer(killer); continue end
                 if ESPSettings.killerESP then
                     if not killer:FindFirstChild("ChitukHub_Highlight") then createPlayerESP(killer, ESPSettings.killerColor, true) end
                 else removePlayerESP(killer) end
+                if ESPSettings.killerTracers then
+                    if not getTracerFor(killer) then createTracer(killer, ESPSettings.killerColor) end
+                else removeTracer(killer) end
             end
         end
         if survivorsFolder then
             for _, survivor in ipairs(survivorsFolder:GetChildren()) do
                 if survivor == LP.Character then continue end
-                if IsRagdoll(survivor) then removePlayerESP(survivor); continue end
+                if IsRagdoll(survivor) then removePlayerESP(survivor); removeTracer(survivor); continue end
                 local player = Players:GetPlayerFromCharacter(survivor)
-                if not player or IsSpectating(player) then removePlayerESP(survivor); continue end
+                if not player or IsSpectating(player) then removePlayerESP(survivor); removeTracer(survivor); continue end
                 if ESPSettings.playerESP then
                     if not survivor:FindFirstChild("ChitukHub_Highlight") then createPlayerESP(survivor, ESPSettings.survivorColor, false) end
                 else removePlayerESP(survivor) end
+                if ESPSettings.survivorTracers then
+                    if not getTracerFor(survivor) then createTracer(survivor, ESPSettings.survivorColor) end
+                else removeTracer(survivor) end
             end
         end
     end
@@ -354,61 +440,82 @@ local function UpdateESP()
     if ingame:FindFirstChild("Map") then
         for _, gen in ipairs(ingame.Map:GetChildren()) do
             if gen:IsA("Model") and gen.Name:lower():find("generator") and gen.Name ~= "FakeGenerator" then
-                if IsRagdoll(gen) then RemoveObjectESP(gen); continue end
+                if IsRagdoll(gen) then RemoveObjectESP(gen); removeTracer(gen); continue end
                 local progress = gen:FindFirstChild("Progress")
                 if ESPSettings.generatorESP and progress and progress.Value < 100 and not gen:FindFirstChild("TAOWARE_Highlight") then
-                    CreateObjectESP(gen, ESPSettings.generatorColor, true)
+                    CreateObjectESP(gen, ESPSettings.generatorColor, true, false, false, false, false, false, false, false, false, nil, ESPSettings.showGeneratorName)
                 elseif not ESPSettings.generatorESP or (progress and progress.Value >= 100) then RemoveObjectESP(gen) end
+                if ESPSettings.generatorTracers and ESPSettings.generatorESP then
+                    if not getTracerFor(gen) then createTracer(gen, ESPSettings.generatorColor) end
+                else removeTracer(gen) end
             end
         end
         for _, item in ipairs(ingame.Map:GetDescendants()) do
             if item.Name == "ItemRoot" and item.Parent and item.Parent:IsA("Model") then
                 local itemModel = item.Parent
                 if ESPSettings.itemESP and not itemModel:FindFirstChild("TAOWARE_Highlight") then
-                    CreateObjectESP(itemModel, ESPSettings.itemColor, false, true)
+                    CreateObjectESP(itemModel, ESPSettings.itemColor, false, true, false, false, false, false, false, false, false, nil, ESPSettings.showItemName)
                 elseif not ESPSettings.itemESP then RemoveObjectESP(itemModel) end
+                if ESPSettings.itemTracers and ESPSettings.itemESP then
+                    if not getTracerFor(itemModel) then createTracer(itemModel, ESPSettings.itemColor) end
+                else removeTracer(itemModel) end
             end
         end
     end
     for _, pizza in ipairs(ingame:GetChildren()) do
         if pizza.Name == "Pizza" and pizza:IsA("BasePart") then
             if ESPSettings.pizzaEsp and not pizza:FindFirstChild("TAOWARE_Highlight") then
-                CreateObjectESP(pizza, ESPSettings.pizzaColor, false, false, true)
+                CreateObjectESP(pizza, ESPSettings.pizzaColor, false, false, true, false, false, false, false, false, false, nil, ESPSettings.showPizzaName)
             elseif not ESPSettings.pizzaEsp then RemoveObjectESP(pizza) end
+            if ESPSettings.pizzaTracers and ESPSettings.pizzaEsp then
+                if not getTracerFor(pizza) then createTracer(pizza, ESPSettings.pizzaColor) end
+            else removeTracer(pizza) end
         end
     end
     for _, delivery in ipairs(ingame:GetChildren()) do
         if delivery:IsA("Model") and table.find(DummyNames, delivery.Name) then
             if ESPSettings.pizzaDeliveryEsp and not delivery:FindFirstChild("TAOWARE_Highlight") then
                 if delivery:FindFirstChild("HumanoidRootPart") then
-                    CreateObjectESP(delivery, ESPSettings.pizzaDeliveryColor, false, false, false, true)
+                    CreateObjectESP(delivery, ESPSettings.pizzaDeliveryColor, false, false, false, true, false, false, false, false, false, nil, ESPSettings.showPizzaDeliveryName)
                 end
             elseif not ESPSettings.pizzaDeliveryEsp then RemoveObjectESP(delivery) end
+            if ESPSettings.pizzaDeliveryTracers and ESPSettings.pizzaDeliveryEsp then
+                if not getTracerFor(delivery) then createTracer(delivery, ESPSettings.pizzaDeliveryColor) end
+            else removeTracer(delivery) end
         end
     end
     for _, zombie in ipairs(ingame:GetChildren()) do
         if zombie.Name == "1x1x1x1Zombie" and zombie:IsA("Model") then
             if ESPSettings.zombieEsp and not zombie:FindFirstChild("TAOWARE_Highlight") then
                 if zombie:FindFirstChild("HumanoidRootPart") then
-                    CreateObjectESP(zombie, ESPSettings.zombieColor, false, false, false, false, true)
+                    CreateObjectESP(zombie, ESPSettings.zombieColor, false, false, false, false, true, false, false, false, false, nil, ESPSettings.showZombieName)
                 end
             elseif not ESPSettings.zombieEsp then RemoveObjectESP(zombie) end
+            if ESPSettings.zombieTracers and ESPSettings.zombieEsp then
+                if not getTracerFor(zombie) then createTracer(zombie, ESPSettings.zombieColor) end
+            else removeTracer(zombie) end
         end
     end
     for _, obj in ipairs(ingame:GetChildren()) do
         if obj.Name:match("TaphTripwire$") and obj:IsA("Model") then
             if ESPSettings.taphTripwireEsp and not obj:FindFirstChild("TAOWARE_Highlight") then
-                CreateObjectESP(obj, ESPSettings.taphTripwireColor, false, false, false, false, false, true)
+                CreateObjectESP(obj, ESPSettings.taphTripwireColor, false, false, false, false, false, true, false, false, false, nil, ESPSettings.showTaphTripwireName)
             elseif not ESPSettings.taphTripwireEsp then RemoveObjectESP(obj) end
+            if ESPSettings.taphTripwireTracers and ESPSettings.taphTripwireEsp then
+                if not getTracerFor(obj) then createTracer(obj, ESPSettings.taphTripwireColor) end
+            else removeTracer(obj) end
         end
         if obj.Name == "SubspaceTripmine" and obj:IsA("Model") then
             if ESPSettings.tripMineEsp and not obj:FindFirstChild("TAOWARE_Highlight") then
-                CreateObjectESP(obj, ESPSettings.tripMineColor, false, false, false, false, false, false, true)
+                CreateObjectESP(obj, ESPSettings.tripMineColor, false, false, false, false, false, false, true, false, false, nil, ESPSettings.showTripMineName)
             elseif not ESPSettings.tripMineEsp then RemoveObjectESP(obj) end
+            if ESPSettings.tripMineTracers and ESPSettings.tripMineEsp then
+                if not getTracerFor(obj) then createTracer(obj, ESPSettings.tripMineColor) end
+            else removeTracer(obj) end
         end
         if obj.Name == "GraffitiCL" and obj:IsA("BasePart") then
             if ESPSettings.graffitiEsp and not obj:FindFirstChild("TAOWARE_Highlight") then
-                CreateObjectESP(obj, ESPSettings.graffitiColor, false, false, false, false, false, false, false, false, true)
+                CreateObjectESP(obj, ESPSettings.graffitiColor, false, false, false, false, false, false, false, false, true, nil, ESPSettings.showGraffitiName)
             elseif not ESPSettings.graffitiEsp then RemoveObjectESP(obj) end
         end
     end
@@ -417,8 +524,11 @@ local function UpdateESP()
             local target = obj:IsA("Model") and obj or obj:IsA("BasePart") and obj or (obj:FindFirstAncestorOfClass("Model") or obj)
             if not target or IsRagdoll(target) then continue end
             if ESPSettings.twoTimeRespawnEsp and not target:FindFirstChild("TAOWARE_Highlight") then
-                CreateObjectESP(target, ESPSettings.twoTimeRespawnColor, false, false, false, false, false, false, false, true)
+                CreateObjectESP(target, ESPSettings.twoTimeRespawnColor, false, false, false, false, false, false, false, true, false, nil, ESPSettings.showTwoTimeRespawnName)
             elseif not ESPSettings.twoTimeRespawnEsp then RemoveObjectESP(target) end
+            if ESPSettings.twoTimeRespawnTracers and ESPSettings.twoTimeRespawnEsp then
+                if not getTracerFor(target) then createTracer(target, ESPSettings.twoTimeRespawnColor) end
+            else removeTracer(target) end
         end
     end
     if MapFolder then
@@ -443,11 +553,15 @@ local function UpdateESP()
     end
 end
 task.spawn(function() while task.wait(0.5) do pcall(UpdateESP) end end)
+task.spawn(function() while task.wait() do pcall(updateTracers) end end)
 
 local KillerGroup = Tabs.ESP:AddLeftGroupbox("Killer", "user")
 local SurvivorGroup = Tabs.ESP:AddLeftGroupbox("Survivor", "user")
 local ItemGroup = Tabs.ESP:AddRightGroupbox("Items", "box")
 local SpecialGroup = Tabs.ESP:AddRightGroupbox("Special", "alert")
+local TracerGroup = Tabs.ESP:AddRightGroupbox("Tracers", "line")
+local NameToggleGroup = Tabs.ESP:AddRightGroupbox("Names", "font")
+local DistanceGroup = Tabs.ESP:AddRightGroupbox("Distance", "ruler")
 KillerGroup:AddToggle("KillerESP", { Text = "Killer ESP", Default = false, Callback = function(Value) ESPSettings.killerESP = Value end })
 KillerGroup:AddToggle("KillerNameESP", { Text = "Show Killer Name", Default = true, Callback = function(Value) ESPSettings.killerNameESP = Value end })
 KillerGroup:AddToggle("KillerHealthESP", { Text = "Show Killer Health", Default = true, Callback = function(Value) ESPSettings.killerHealthESP = Value end })
@@ -473,6 +587,27 @@ SpecialGroup:AddToggle("PizzaDeliveryESP", { Text = "Pizza Delivery ESP", Defaul
 SpecialGroup:AddToggle("ZombieESP", { Text = "Zombie ESP", Default = false, Callback = function(Value) ESPSettings.zombieEsp = Value end }):AddColorPicker("ZombieColor", { Default = ESPSettings.zombieColor, Title = "Zombie Color", Callback = function(Value) ESPSettings.zombieColor = Value end })
 SpecialGroup:AddToggle("AzureGroundBulbESP", { Text = "GroundBulb ESP", Default = false, Callback = function(Value) ESPSettings.azureGroundBulbESP = Value end }):AddColorPicker("AzureGroundBulbColor", { Default = ESPSettings.azureGroundBulbColor, Title = "GroundBulb Color", Callback = function(Value) ESPSettings.azureGroundBulbColor = Value end })
 SpecialGroup:AddToggle("AzureVineESP", { Text = "Vine ESP", Default = false, Callback = function(Value) ESPSettings.azureVineESP = Value end }):AddColorPicker("AzureVineColor", { Default = ESPSettings.azureVineColor, Title = "Vine Color", Callback = function(Value) ESPSettings.azureVineColor = Value end })
+TracerGroup:AddToggle("KillerTracers", { Text = "Killer Tracers", Default = false, Callback = function(Value) ESPSettings.killerTracers = Value end })
+TracerGroup:AddToggle("SurvivorTracers", { Text = "Survivor Tracers", Default = false, Callback = function(Value) ESPSettings.survivorTracers = Value end })
+TracerGroup:AddToggle("GeneratorTracers", { Text = "Generator Tracers", Default = false, Callback = function(Value) ESPSettings.generatorTracers = Value end })
+TracerGroup:AddToggle("ItemTracers", { Text = "Item Tracers", Default = false, Callback = function(Value) ESPSettings.itemTracers = Value end })
+TracerGroup:AddToggle("PizzaTracers", { Text = "Pizza Tracers", Default = false, Callback = function(Value) ESPSettings.pizzaTracers = Value end })
+TracerGroup:AddToggle("PizzaDeliveryTracers", { Text = "Pizza Delivery Tracers", Default = false, Callback = function(Value) ESPSettings.pizzaDeliveryTracers = Value end })
+TracerGroup:AddToggle("ZombieTracers", { Text = "Zombie Tracers", Default = false, Callback = function(Value) ESPSettings.zombieTracers = Value end })
+TracerGroup:AddToggle("TaphTripwireTracers", { Text = "Tripwire Tracers", Default = false, Callback = function(Value) ESPSettings.taphTripwireTracers = Value end })
+TracerGroup:AddToggle("TripMineTracers", { Text = "Mine Tracers", Default = false, Callback = function(Value) ESPSettings.tripMineTracers = Value end })
+TracerGroup:AddToggle("TwoTimeRespawnTracers", { Text = "Respawn Tracers", Default = false, Callback = function(Value) ESPSettings.twoTimeRespawnTracers = Value end })
+NameToggleGroup:AddToggle("ShowGeneratorName", { Text = "Show Generator Name", Default = true, Callback = function(Value) ESPSettings.showGeneratorName = Value end })
+NameToggleGroup:AddToggle("ShowItemName", { Text = "Show Item Name", Default = true, Callback = function(Value) ESPSettings.showItemName = Value end })
+NameToggleGroup:AddToggle("ShowPizzaName", { Text = "Show Pizza Name", Default = true, Callback = function(Value) ESPSettings.showPizzaName = Value end })
+NameToggleGroup:AddToggle("ShowPizzaDeliveryName", { Text = "Show Delivery Name", Default = true, Callback = function(Value) ESPSettings.showPizzaDeliveryName = Value end })
+NameToggleGroup:AddToggle("ShowZombieName", { Text = "Show Zombie Name", Default = true, Callback = function(Value) ESPSettings.showZombieName = Value end })
+NameToggleGroup:AddToggle("ShowTaphTripwireName", { Text = "Show Tripwire Name", Default = true, Callback = function(Value) ESPSettings.showTaphTripwireName = Value end })
+NameToggleGroup:AddToggle("ShowTripMineName", { Text = "Show Mine Name", Default = true, Callback = function(Value) ESPSettings.showTripMineName = Value end })
+NameToggleGroup:AddToggle("ShowTwoTimeRespawnName", { Text = "Show Respawn Name", Default = true, Callback = function(Value) ESPSettings.showTwoTimeRespawnName = Value end })
+NameToggleGroup:AddToggle("ShowGraffitiName", { Text = "Show Graffiti Name", Default = true, Callback = function(Value) ESPSettings.showGraffitiName = Value end })
+DistanceGroup:AddToggle("LimitDistance", { Text = "Limit ESP Distance", Default = false, Callback = function(Value) ESPSettings.limitDistance = Value end })
+DistanceGroup:AddSlider("MaxDistance", { Text = "Max Distance", Default = 150, Min = 10, Max = 1000, Rounding = 0, Callback = function(Value) ESPSettings.maxDistance = Value end })
 
 local flow = { on = false, nodeDelay = 0.04 }
 local function flowKey(n) return n.row .. "-" .. n.col end
@@ -1055,15 +1190,183 @@ createAnimationTrigger("JohnDoe", { ["127172483138092"] = true }, "Survivors", t
 createAnimationTrigger("Nosferatu", { ["79282445348798"] = true, ["128009545282102"] = true }, "Survivors", true)
 createAnimationTrigger("Punch", { ["108911997126897"] = true, ["82137285150006"] = true, ["129843313690921"] = true, ["140703210927645"] = true, ["136007065400978"] = true, ["86096387000557"] = true, ["87259391926321"] = true, ["86709774283672"] = true, ["108807732150251"] = true, ["138040001965654"] = true }, "Killers", false)
 pcall(function() generalGroup:AddToggle("SilentAimToggle", { Text = "Silent Aim (Killer)", Default = false, Callback = function(v) toggleModule("SilentAim", v) end }) end)
+pcall(function() generalGroup:AddToggle("SoundTriggerToggle", { Text = "Sound Trigger Aim", Default = false, Callback = function(v) toggleModule("SoundTrigger", v) end }) end)
 pcall(function() survivorGroup:AddToggle("Onex4Toggle", { Text = "1x4 Aim", Default = false, Callback = function(v) toggleModule("1x4", v) end }) end)
 pcall(function() survivorGroup:AddToggle("CookiddToggle", { Text = "C00kidd Aim (Camera)", Default = false, Callback = function(v) toggleModule("C00kidd", v) end }) end)
 pcall(function() survivorGroup:AddToggle("JohnDoeToggle", { Text = "John Doe Aim (Camera)", Default = false, Callback = function(v) toggleModule("JohnDoe", v) end }) end)
 pcall(function() survivorGroup:AddToggle("NosferatuToggle", { Text = "Nosferatu Aim (Camera)", Default = false, Callback = function(v) toggleModule("Nosferatu", v) end }) end)
+pcall(function() survivorGroup:AddToggle("NoilStarToggle", { Text = "Noil Star Bomb Aim", Default = false, Callback = function(v) toggleModule("NoilStar", v) end }) end)
+pcall(function() survivorGroup:AddToggle("NoilVoidToggle", { Text = "Noil Void Rush Aim", Default = false, Callback = function(v) toggleModule("NoilVoid", v) end }) end)
 pcall(function() killerGroup:AddToggle("JaneDoeToggle", { Text = "Jane Doe Aim", Default = false, Callback = function(v) toggleModule("JaneDoe", v) end }) end)
 pcall(function() killerGroup:AddToggle("JaneDoeAxeToggle", { Text = "Jane Doe Axe Aim", Default = false, Callback = function(v) toggleModule("JaneDoeAxe", v) end }) end)
 pcall(function() killerGroup:AddToggle("ChanceToggle", { Text = "Chance Aim", Default = false, Callback = function(v) toggleModule("Chance", v) end }) end)
 pcall(function() killerGroup:AddToggle("DusekkarToggle", { Text = "Dusekkar Aim (Camera)", Default = false, Callback = function(v) toggleModule("Dusekkar", v) end }) end)
 pcall(function() killerGroup:AddToggle("PunchToggle", { Text = "Punch Aim", Default = false, Callback = function(v) toggleModule("Punch", v) end }) end)
+
+local silentAimEnabled = false
+local silentAimConnection = nil
+local function isKiller()
+    local killersFolder = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
+    if killersFolder and LP.Character then
+        for _, v in ipairs(killersFolder:GetChildren()) do
+            if v == LP.Character then return true end
+        end
+    end
+    return false
+end
+local function getClosestSurvivor()
+    local survivorsFolder = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Survivors")
+    if not survivorsFolder then return nil end
+    local char = LP.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+    local myPos = char.HumanoidRootPart.Position
+    local closest = nil; local shortest = math.huge
+    for _, model in ipairs(survivorsFolder:GetChildren()) do
+        if model:IsA("Model") and model:FindFirstChild("HumanoidRootPart") then
+            local dist = (model.HumanoidRootPart.Position - myPos).Magnitude
+            if dist < shortest and dist <= aimSettings.distance then shortest = dist; closest = model end
+        end
+    end
+    return closest
+end
+local function faceTarget(model)
+    if not model or not model:FindFirstChild("HumanoidRootPart") then return end
+    local char = LP.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    local root = char.HumanoidRootPart
+    local targetPos = model.HumanoidRootPart.Position
+    root.CFrame = CFrame.new(root.Position, Vector3.new(targetPos.X, root.Position.Y, targetPos.Z))
+end
+registerTriggerModule("SilentAim", function()
+    silentAimEnabled = true
+    if silentAimConnection then silentAimConnection:Disconnect() end
+    silentAimConnection = RunService.Heartbeat:Connect(function()
+        if not silentAimEnabled or not isKiller() then return end
+        local t = getClosestSurvivor()
+        if t then faceTarget(t) end
+    end)
+end, function()
+    silentAimEnabled = false
+    if silentAimConnection then silentAimConnection:Disconnect(); silentAimConnection = nil end
+end)
+
+local johnaim = false; local Noloop = nil; local No2loop = nil
+local aimbotNoilsounds = { "StarBomb", "StarBombTrail", "StarBombExplosion" }
+local aimbotNoilsounds2 = { "VoidRush", "VoidRushTrail" }
+local function NoilStarAim(state)
+    johnaim = state
+    if state then
+        if Noloop then Noloop:Disconnect() end
+        local char = LP.Character; if not char then return end
+        local rootPart = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+        Noloop = rootPart.ChildAdded:Connect(function(child)
+            if not johnaim then return end
+            for _, v in pairs(aimbotNoilsounds) do
+                if child.Name == v then
+                    local survivors = {}
+                    for _, player in pairs(Players:GetPlayers()) do
+                        if player ~= LP then
+                            local character = player.Character
+                            if character and character:FindFirstChild("HumanoidRootPart") then table.insert(survivors, character) end
+                        end
+                    end
+                    local nearestSurvivor = nil; local shortestDistance = math.huge
+                    local playerHRP = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+                    if not playerHRP then return end
+                    for _, survivor in pairs(survivors) do
+                        local survivorHRP = survivor.HumanoidRootPart
+                        local distance = (survivorHRP.Position - playerHRP.Position).Magnitude
+                        if distance < shortestDistance then shortestDistance = distance; nearestSurvivor = survivor end
+                    end
+                    if nearestSurvivor then
+                        local nearestHRP = nearestSurvivor.HumanoidRootPart
+                        local num = 1
+                        while num <= 50 do
+                            task.wait(0.01); num = num + 1
+                            Workspace.CurrentCamera.CFrame = CFrame.new(Workspace.CurrentCamera.CFrame.Position, nearestHRP.Position)
+                            playerHRP.CFrame = CFrame.lookAt(playerHRP.Position, Vector3.new(nearestHRP.Position.X, nearestHRP.Position.Y, nearestHRP.Position.Z))
+                        end
+                    end
+                end
+            end
+        end)
+    else
+        if Noloop then Noloop:Disconnect(); Noloop = nil end
+    end
+end
+local function NoilVoidAim(state)
+    johnaim = state
+    if state then
+        if No2loop then No2loop:Disconnect() end
+        local char = LP.Character; if not char then return end
+        local rootPart = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+        No2loop = rootPart.ChildAdded:Connect(function(child)
+            if not johnaim then return end
+            for _, v in pairs(aimbotNoilsounds2) do
+                if child.Name == v then
+                    local survivors = {}
+                    for _, player in pairs(Players:GetPlayers()) do
+                        if player ~= LP then
+                            local character = player.Character
+                            if character and character:FindFirstChild("HumanoidRootPart") then table.insert(survivors, character) end
+                        end
+                    end
+                    local nearestSurvivor = nil; local shortestDistance = math.huge
+                    local playerHRP = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+                    if not playerHRP then return end
+                    for _, survivor in pairs(survivors) do
+                        local survivorHRP = survivor.HumanoidRootPart
+                        local distance = (survivorHRP.Position - playerHRP.Position).Magnitude
+                        if distance < shortestDistance then shortestDistance = distance; nearestSurvivor = survivor end
+                    end
+                    if nearestSurvivor then
+                        local nearestHRP = nearestSurvivor.HumanoidRootPart
+                        local num = 1
+                        while num <= 50 do
+                            task.wait(0.01); num = num + 1
+                            Workspace.CurrentCamera.CFrame = CFrame.new(Workspace.CurrentCamera.CFrame.Position, nearestHRP.Position)
+                            playerHRP.CFrame = CFrame.lookAt(playerHRP.Position, Vector3.new(nearestHRP.Position.X, nearestHRP.Position.Y, nearestHRP.Position.Z))
+                        end
+                    end
+                end
+            end
+        end)
+    else
+        if No2loop then No2loop:Disconnect(); No2loop = nil end
+    end
+end
+registerTriggerModule("NoilStar", function() NoilStarAim(true) end, function() NoilStarAim(false) end)
+registerTriggerModule("NoilVoid", function() NoilVoidAim(true) end, function() NoilVoidAim(false) end)
+
+local soundTriggerEnabled = false
+local soundConnections = {}
+local globalSoundConn = nil
+local targetSoundIds = { "rbxassetid://120944766765949", "rbxassetid://92445809840331", "rbxassetid://89315669689903", "rbxassetid://77069367360935", "rbxassetid://123979582011869", "rbxassetid://109525294317144", "rbxassetid://105934041806374", "rbxassetid://132331977491979", "rbxassetid://128009545282102", "rbxassetid://79282445348798" }
+local function onSoundPlayed(sound)
+    if not soundTriggerEnabled then return end
+    local soundId = sound.SoundId
+    for _, id in ipairs(targetSoundIds) do if soundId == id then executeAim(); break end end
+end
+local function bindSound(sound)
+    if not sound:IsA("Sound") then return end
+    local conn = sound.Played:Connect(function() onSoundPlayed(sound) end)
+    table.insert(soundConnections, conn)
+end
+registerTriggerModule("SoundTrigger", function()
+    soundTriggerEnabled = true
+    local function bindAll(container) for _, obj in ipairs(container:GetDescendants()) do if obj:IsA("Sound") then bindSound(obj) end end end
+    if LP.Character then bindAll(LP.Character) end
+    local charConn = LP.CharacterAdded:Connect(function(char) task.wait(0.2); bindAll(char) end)
+    table.insert(soundConnections, charConn)
+    globalSoundConn = Workspace.DescendantAdded:Connect(function(child) if child:IsA("Sound") then bindSound(child) end end)
+    table.insert(soundConnections, globalSoundConn)
+    bindAll(Workspace)
+end, function()
+    soundTriggerEnabled = false
+    for _, conn in ipairs(soundConnections) do conn:Disconnect() end
+    soundConnections = {}
+    if globalSoundConn then globalSoundConn:Disconnect(); globalSoundConn = nil end
+end)
 
 local AllAnimations = {}
 pcall(function()
@@ -1109,13 +1412,6 @@ local function GetAnimationType(ID)
     return nil
 end
 
-local PlayersFolder = Workspace:FindFirstChild("Players")
-local KillersFolder = PlayersFolder and PlayersFolder:FindFirstChild("Killers")
-local SurvivorsFolder = PlayersFolder and PlayersFolder:FindFirstChild("Survivors")
-local RagdollsFolder = Workspace:FindFirstChild("Ragdolls")
-local HitboxesFolder = Workspace:FindFirstChild("Hitboxes") or Workspace
-local InGame = Workspace:FindFirstChild("Map") and Workspace:FindFirstChild("Map"):FindFirstChild("Ingame")
-local GameMap = InGame and InGame:FindFirstChild("Map")
 local NetworkMod = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage:FindFirstChild("Modules"):FindFirstChild("Network", true)
 local Network = NetworkMod and (NetworkMod:FindFirstChild("Network") or NetworkMod)
 local UseActorAbilityRemote = Network and Network:FindFirstChildOfClass("RemoteEvent")
@@ -1629,6 +1925,124 @@ end)
 EmotesGroup:AddButton("Stop Emote", function() emStop() end)
 lp.CharacterAdded:Connect(function() task.wait(0.5); if emState.emoting then emStop() end end)
 lp.CharacterRemoving:Connect(function() if emState.emoting then emStop() end end)
+
+local PlayerAnimGroup = Tabs.Action:AddRightGroupbox("Player Animation", "user")
+local baseAnimations = {}
+local animationEntries = {}
+local function getAnimId(animValue) return animValue and tostring(animValue) or nil end
+local function collectBaseAnimations()
+    baseAnimations = {}
+    local assets = ReplicatedStorage:FindFirstChild("Assets")
+    if not assets then return end
+    for _, roleType in ipairs({"Killers", "Survivors"}) do
+        local folder = assets:FindFirstChild(roleType)
+        if folder then
+            for _, charFolder in ipairs(folder:GetChildren()) do
+                if charFolder:IsA("Folder") then
+                    local configScript = charFolder:FindFirstChild("Config")
+                    if configScript and configScript:IsA("ModuleScript") then
+                        local ok, data = pcall(require, configScript)
+                        if ok and data and data.Animations then
+                            local anims = data.Animations
+                            baseAnimations[charFolder.Name] = { Idle = getAnimId(anims.Idle), Walk = getAnimId(anims.Walk), Run = getAnimId(anims.Run), DisplayName = data.DisplayName or charFolder.Name }
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+local function buildUniqueList()
+    animationEntries = {}
+    local seen = {}
+    local function addEntry(name, idle, walk, run)
+        local key = idle .. "|" .. walk .. "|" .. run
+        if not seen[key] then table.insert(animationEntries, { Name = name, Idle = idle, Walk = walk, Run = run }); seen[key] = true end
+    end
+    for charName, data in pairs(baseAnimations) do addEntry(data.DisplayName or charName, data.Idle or "", data.Walk or "", data.Run or "") end
+    local assets = ReplicatedStorage:FindFirstChild("Assets")
+    if assets then
+        local skinsFolder = assets:FindFirstChild("Skins")
+        if skinsFolder then
+            for _, roleType in ipairs({"Killers", "Survivors"}) do
+                local skinRoleFolder = skinsFolder:FindFirstChild(roleType)
+                if skinRoleFolder then
+                    for _, charFolder in ipairs(skinRoleFolder:GetChildren()) do
+                        if charFolder:IsA("Folder") then
+                            local baseCharName = charFolder.Name
+                            local baseData = baseAnimations[baseCharName]
+                            for _, skinItem in ipairs(charFolder:GetChildren()) do
+                                if skinItem:IsA("Folder") then
+                                    local configScript = skinItem:FindFirstChild("Config")
+                                    if configScript and configScript:IsA("ModuleScript") then
+                                        local ok, data = pcall(require, configScript)
+                                        if ok and data and data.Animations then
+                                            local anims = data.Animations
+                                            local idle = getAnimId(anims.Idle) or (baseData and baseData.Idle)
+                                            local walk = getAnimId(anims.Walk) or (baseData and baseData.Walk)
+                                            local run = getAnimId(anims.Run) or (baseData and baseData.Run)
+                                            if idle and walk and run then
+                                                local name = data.DisplayName or skinItem.Name
+                                                addEntry(name, idle, walk, run)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+collectBaseAnimations()
+buildUniqueList()
+local animEntryNames = {}
+for _, entry in ipairs(animationEntries) do table.insert(animEntryNames, entry.Name) end
+local selectedEntry = animEntryNames[1] or ""
+PlayerAnimGroup:AddDropdown("SelectedEntry", { Text = "Select Animation", Values = animEntryNames, Default = selectedEntry, Callback = function(val) selectedEntry = val end })
+local currentTracks = {}
+local moveConn = nil
+local function stopAnimations()
+    if moveConn then moveConn:Disconnect(); moveConn = nil end
+    for _, track in pairs(currentTracks) do if track then track:Stop(); track:Destroy() end end
+    currentTracks = {}
+end
+local function applyAnimation()
+    stopAnimations()
+    local entry = nil
+    for _, e in ipairs(animationEntries) do if e.Name == selectedEntry then entry = e; break end end
+    if not entry then return end
+    local char = lp.Character; if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
+    local animator = hum:FindFirstChildOfClass("Animator")
+    if not animator then animator = Instance.new("Animator"); animator.Parent = hum end
+    local loaded = {}
+    local animTypes = {"Idle", "Walk", "Run"}
+    for _, animType in ipairs(animTypes) do
+        local id = entry[animType]
+        if id and id ~= "" then
+            local anim = Instance.new("Animation"); anim.AnimationId = id
+            local track = animator:LoadAnimation(anim); track.Priority = Enum.AnimationPriority.Movement; loaded[animType] = track
+        end
+    end
+    currentTracks = loaded
+    moveConn = RunService.RenderStepped:Connect(function()
+        if not (char and char.Parent) then stopAnimations(); return end
+        local spd = hum.WalkSpeed; local dir = hum.MoveDirection.Magnitude
+        local newTrack = nil
+        if dir > 0.1 then
+            if spd >= 20 then newTrack = loaded.Run or loaded.Walk else newTrack = loaded.Walk or loaded.Run end
+        else newTrack = loaded.Idle end
+        for _, track in pairs(loaded) do if track.IsPlaying and track ~= newTrack then track:Stop() end end
+        if newTrack and not newTrack.IsPlaying then newTrack:Play() end
+    end)
+end
+PlayerAnimGroup:AddButton("Apply Animation", applyAnimation)
+PlayerAnimGroup:AddButton("Stop Animation", function() stopAnimations() end)
+PlayerAnimGroup:AddButton("Refresh List", function() collectBaseAnimations(); buildUniqueList() end)
+lp.CharacterAdded:Connect(function() task.wait(0.5); if next(currentTracks) then stopAnimations() end end)
 end)
 
 task.spawn(function()
@@ -1943,6 +2357,10 @@ end)
 task.spawn(function()
 local FeatLeft = Tabs.Features:AddLeftGroupbox("Character", "user")
 local FeatRight = Tabs.Features:AddRightGroupbox("World", "sun")
+
+local InGameLocal = Workspace:FindFirstChild("Map") and Workspace:FindFirstChild("Map"):FindFirstChild("Ingame")
+local KillersFolderLocal = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
+
 local antiSlownessEnabled = false
 local function checkSlownessValue(valueInstance)
     if not antiSlownessEnabled then return end
@@ -1974,6 +2392,7 @@ FeatLeft:AddToggle("AntiSlowness", { Text = "Anti Slowness", Default = false, Ca
         if sm then for _, child in ipairs(sm:GetChildren()) do checkSlownessValue(child) end end
     end
 end })
+
 local enableJumpingEnabled = false
 LP.CharacterAdded:Connect(function(char)
     task.wait(0.3)
@@ -1993,17 +2412,18 @@ FeatLeft:AddToggle("EnableJumping", { Text = "Enable Jumping", Default = false, 
         if v then hum.JumpPower = 47 else hum.JumpPower = 0 end
     end
 end })
+
 local disableTrails = false
 local disableFootprints = false
 local smallerSpikes = false
 local function updateInGameObjects()
-    if not InGame then return end
-    for _, v in ipairs(InGame:GetChildren()) do
+    if not InGameLocal then return end
+    for _, v in ipairs(InGameLocal:GetChildren()) do
         if v:IsA("Folder") and v.Name:find("JohnDoeTrail") then
             for _, p in ipairs(v:GetChildren()) do
                 if p:IsA("BasePart") then p.CanTouch = not disableTrails end
             end
-        elseif v:IsA("Folder") and v.Name:find("Shadows") then
+        elseif v:IsA("Folder") and (v.Name:lower():find("shadows") or v.Name:lower():find("footprint")) then
             for _, p in ipairs(v:GetChildren()) do
                 if p:IsA("BasePart") then p.CanTouch = not disableFootprints end
             end
@@ -2022,12 +2442,13 @@ end)
 FeatRight:AddToggle("DisableJohnDoeTrails", { Text = "Disable John Doe's Trails", Default = false, Callback = function(v) disableTrails = v; updateInGameObjects() end })
 FeatRight:AddToggle("DisableJohnDoeFootprints", { Text = "Disable John Doe's Footprints", Default = false, Callback = function(v) disableFootprints = v; updateInGameObjects() end })
 FeatRight:AddToggle("SmallerSpikeCollisions", { Text = "Smaller Spike Collisions", Default = false, Callback = function(v) smallerSpikes = v; updateInGameObjects() end })
+
 local disableNoliNPC = false
 local disable007n7NPC = false
 local function handleNoliNPC(value)
-    if not (KillersFolder and InGame) then return end
+    if not (KillersFolderLocal and InGameLocal) then return end
     if value then
-        for _, v in ipairs(KillersFolder:GetChildren()) do
+        for _, v in ipairs(KillersFolderLocal:GetChildren()) do
             if v.Name:lower() == "noli" and not Players:GetPlayerFromCharacter(v) then
                 v.Parent = Lighting
                 pcall(function() v:PivotTo(v:GetPivot() * CFrame.new(0, -100, 0)) end)
@@ -2042,16 +2463,16 @@ local function handleNoliNPC(value)
     else
         for _, v in ipairs(Lighting:GetChildren()) do
             if v.Name:lower() == "noli" then
-                v.Parent = InGame
+                v.Parent = InGameLocal
                 pcall(function() v:PivotTo(v:GetPivot() * CFrame.new(0, 100, 0)) end)
             end
         end
     end
 end
 local function handle007n7NPC(value)
-    if not InGame then return end
+    if not InGameLocal then return end
     if value then
-        for _, v in ipairs(InGame:GetChildren()) do
+        for _, v in ipairs(InGameLocal:GetChildren()) do
             if v.Name:lower() == "007n7" and not Players:GetPlayerFromCharacter(v) then
                 v.Parent = Lighting
                 local hrp = v:FindFirstChild("HumanoidRootPart")
@@ -2064,15 +2485,15 @@ local function handle007n7NPC(value)
         end
     else
         for _, v in ipairs(Lighting:GetChildren()) do
-            if v.Name:lower() == "007n7" then v.Parent = InGame end
+            if v.Name:lower() == "007n7" then v.Parent = InGameLocal end
         end
     end
 end
-if KillersFolder then
-    KillersFolder.ChildAdded:Connect(function() task.wait(0.5); handleNoliNPC(disableNoliNPC) end)
+if KillersFolderLocal then
+    KillersFolderLocal.ChildAdded:Connect(function() task.wait(0.5); handleNoliNPC(disableNoliNPC) end)
 end
-if InGame then
-    InGame.ChildAdded:Connect(function() task.wait(0.1); handle007n7NPC(disable007n7NPC) end)
+if InGameLocal then
+    InGameLocal.ChildAdded:Connect(function() task.wait(0.1); handle007n7NPC(disable007n7NPC) end)
 end
 FeatRight:AddToggle("DisableNoliNPC", { Text = "Disable Noli's NPC", Default = false, Callback = function(v) disableNoliNPC = v; handleNoliNPC(v) end })
 FeatRight:AddToggle("Disable007n7NPC", { Text = "Disable 007n7's NPC", Default = false, Callback = function(v) disable007n7NPC = v; handle007n7NPC(v) end })
