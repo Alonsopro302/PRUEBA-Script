@@ -68,6 +68,7 @@ local Tabs = {
     ["Generator"] = Window:AddTab("Generator", "zap"),
     ["Player"] = Window:AddTab("Player", "user"),
     ["Aimbot"] = Window:AddTab("Aimbot", "crosshair"),
+    ["Chance"] = Window:AddTab("Chance", "zap"),
     ["Block"] = Window:AddTab("Block", "shield"),
     ["Stab"] = Window:AddTab("Stab", "sword"),
     ["Sk8"] = Window:AddTab("Sk8", "zap"),
@@ -1182,7 +1183,6 @@ local function createAnimationTrigger(moduleName, animIds, targetType, useCamera
 end
 createAnimationTrigger("JaneDoe", { ["106527725058030"] = true, ["139929602101552"] = true }, "Killers", false)
 createAnimationTrigger("JaneDoeAxe", { ["111918351126361"] = true }, "Killers", false)
-createAnimationTrigger("Chance", { ["103601716322988"] = true, ["133491532453922"] = true, ["86371356500204"] = true, ["76649505662612"] = true, ["81698196845041"] = true }, "Killers", false)
 createAnimationTrigger("Dusekkar", { ["77894750279891"] = true }, "Killers", true)
 createAnimationTrigger("1x4", { ["99050723653468"] = true, ["119181003138006"] = true }, "Survivors", false)
 createAnimationTrigger("C00kidd", { ["18885919947"] = true }, "Survivors", true)
@@ -1199,7 +1199,6 @@ pcall(function() survivorGroup:AddToggle("NoilStarToggle", { Text = "Noil Star B
 pcall(function() survivorGroup:AddToggle("NoilVoidToggle", { Text = "Noil Void Rush Aim", Default = false, Callback = function(v) toggleModule("NoilVoid", v) end }) end)
 pcall(function() killerGroup:AddToggle("JaneDoeToggle", { Text = "Jane Doe Aim", Default = false, Callback = function(v) toggleModule("JaneDoe", v) end }) end)
 pcall(function() killerGroup:AddToggle("JaneDoeAxeToggle", { Text = "Jane Doe Axe Aim", Default = false, Callback = function(v) toggleModule("JaneDoeAxe", v) end }) end)
-pcall(function() killerGroup:AddToggle("ChanceToggle", { Text = "Chance Aim", Default = false, Callback = function(v) toggleModule("Chance", v) end }) end)
 pcall(function() killerGroup:AddToggle("DusekkarToggle", { Text = "Dusekkar Aim (Camera)", Default = false, Callback = function(v) toggleModule("Dusekkar", v) end }) end)
 pcall(function() killerGroup:AddToggle("PunchToggle", { Text = "Punch Aim", Default = false, Callback = function(v) toggleModule("Punch", v) end }) end)
 
@@ -1395,107 +1394,358 @@ pcall(function()
         end
     end
 end)
-local function GetAnimationType(ID)
-    if not ID then return nil end
-    local idNum = tostring(ID):match("%d+") or tostring(ID)
-    for name, anims in pairs(AllAnimations) do
-        for animType, animId in pairs(anims) do
-            if type(animId) == "table" then
-                for _, v in pairs(animId) do
-                    if type(v) == "string" and v:find(tostring(idNum)) then return animType, name end
-                end
-            else
-                if type(animId) == "string" and animId:find(tostring(idNum)) then return animType, name end
-            end
+
+local ChanceTab = Tabs["Chance"]
+local ChanceLeft = ChanceTab:AddLeftGroupbox("Chance", "zap")
+local chanceAimEnabled = false
+local chancePrediction = 4
+local chanceShootConn = nil
+local chanceCoinFlipEnabled = false
+
+local function setupChanceShoot(btn)
+    if chanceShootConn then chanceShootConn:Disconnect() end
+    chanceShootConn = btn.Activated:Connect(function()
+        if not chanceAimEnabled then return end
+        local Character = LP.Character
+        if not Character then return end
+        local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+        local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+        if not HumanoidRootPart or not Humanoid then return end
+        local Killers = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
+        if not Killers then return end
+        local target = nil
+        for _, v in ipairs(Killers:GetChildren()) do
+            if v:IsA("Model") then target = v; break end
         end
-    end
-    return nil
+        if not target then return end
+        local targetRoot = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
+        if not targetRoot then return end
+        local autoRotate = Humanoid.AutoRotate
+        Humanoid.AutoRotate = false
+        local ts = tick()
+        local conn
+        conn = RunService.RenderStepped:Connect(function()
+            if tick() - ts >= 2 then
+                Humanoid.AutoRotate = autoRotate
+                conn:Disconnect()
+                return
+            end
+            if not HumanoidRootPart.Parent or not targetRoot.Parent then
+                Humanoid.AutoRotate = autoRotate
+                conn:Disconnect()
+                return
+            end
+            local pos = targetRoot.Position + targetRoot.CFrame.LookVector * chancePrediction
+            local look = Vector3.new(pos.X, HumanoidRootPart.Position.Y, pos.Z)
+            HumanoidRootPart.CFrame = CFrame.lookAt(HumanoidRootPart.Position, look)
+        end)
+    end)
 end
+
+local ChancePlayerGui = LP:WaitForChild("PlayerGui")
+local chanceShootBtn = ChancePlayerGui:FindFirstChild("Shoot", true)
+if chanceShootBtn and chanceShootBtn:IsA("ImageButton") then setupChanceShoot(chanceShootBtn) end
+ChancePlayerGui.DescendantAdded:Connect(function(d)
+    if d:IsA("ImageButton") and d.Name == "Shoot" then setupChanceShoot(d) end
+end)
+LP.CharacterAdded:Connect(function()
+    task.wait(1)
+    local s = ChancePlayerGui:FindFirstChild("Shoot", true)
+    if s and s:IsA("ImageButton") then setupChanceShoot(s) end
+end)
+
+ChanceLeft:AddToggle("ChanceAimV2", { Text = "Auto Aim", Default = false, Callback = function(v) chanceAimEnabled = v end })
+ChanceLeft:AddInput("ChancePrediction", { Text = "Prediction", Default = "4", Placeholder = "4", Numeric = true, Callback = function(v) local n = tonumber(v); if n then chancePrediction = n end end })
+ChanceLeft:AddToggle("ChanceAutoCoinFlip", { Text = "Auto CoinFlip", Default = false, Callback = function(v)
+    chanceCoinFlipEnabled = v
+    if v then
+        task.spawn(function()
+            local Killers = Workspace:WaitForChild("Players"):WaitForChild("Killers")
+            local RemoteEvent = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Network"):WaitForChild("Network"):WaitForChild("RemoteEvent")
+            while chanceCoinFlipEnabled do
+                task.wait(0.1)
+                local Character = LP.Character
+                local root = Character and Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local mainUI = ChancePlayerGui:FindFirstChild("MainUI")
+                    if mainUI then
+                        local abilityContainer = mainUI:FindFirstChild("AbilityContainer")
+                        if abilityContainer then
+                            local reroll = abilityContainer:FindFirstChild("Reroll")
+                            local charges = reroll and reroll:FindFirstChild("Charges")
+                            if charges and charges:IsA("TextLabel") and charges.Text ~= "3" then
+                                local near = false
+                                for _, child in ipairs(Killers:GetChildren()) do
+                                    if child:IsA("Model") then
+                                        local hrp = child:FindFirstChild("HumanoidRootPart")
+                                        if hrp and (root.Position - hrp.Position).Magnitude <= 50 then near = true; break end
+                                    end
+                                end
+                                if not near then
+                                    RemoteEvent:FireServer("UseActorAbility", { "CoinFlip" })
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end })
 
 local NetworkMod = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage:FindFirstChild("Modules"):FindFirstChild("Network", true)
 local Network = NetworkMod and (NetworkMod:FindFirstChild("Network") or NetworkMod)
 local UseActorAbilityRemote = Network and Network:FindFirstChildOfClass("RemoteEvent")
 
-local BlockableAttacks = {"slash","stab","attack","punch","behead","swing","golemslash"}
-local CustomHitboxes = { ["golemslash"] = { Size = Vector3.new(6, 2, 7), Offset = CFrame.new(0,0,-5.5) } }
-local FireSignal
-pcall(function() FireSignal = firesignal end)
-local SelfParams = OverlapParams.new()
-SelfParams.MaxParts = 1
-SelfParams.FilterType = Enum.RaycastFilterType.Include
-local ShowHitboxesSetting = LP:FindFirstChild("PlayerData") and LP.PlayerData:FindFirstChild("Settings") and LP.PlayerData.Settings:FindFirstChild("ShowHitboxes", true)
-local AutoBlockEnabled = false
-local handledKillers = {}
-
-local function HandleKiller(killer)
-    if handledKillers[killer] then return end
-    handledKillers[killer] = true
-    local humanoid = killer:FindFirstChildOfClass("Humanoid") or killer:WaitForChild("Humanoid", 5)
-    if not humanoid then return end
-    local queryHitbox = killer:FindFirstChild("QueryHitbox") or killer:WaitForChild("QueryHitbox", 5)
-    if not queryHitbox then return end
-    local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid:WaitForChild("Animator", 5)
-    if not animator then return end
-    animator.AnimationPlayed:Connect(function(track)
-        if not AutoBlockEnabled then return end
-        if not track or not track.Animation then return end
-        local attacker = Players:GetPlayerFromCharacter(killer)
-        if not attacker then return end
-        local animType = GetAnimationType(track.Animation.AnimationId)
-        if not animType or type(animType) ~= "string" then return end
-        if not table.find(BlockableAttacks, animType:lower()) then return end
-        local localChar = LP.Character
-        if not localChar then return end
-        if localChar.Parent ~= SurvivorsFolder then return end
-        local localQueryHitbox = localChar:FindFirstChild("QueryHitbox")
-        if not localQueryHitbox then return end
-        local mainUI = LP:FindFirstChild("PlayerGui") and LP.PlayerGui:FindFirstChild("MainUI")
-        local abilityContainer = mainUI and mainUI:FindFirstChild("AbilityContainer")
-        local blockButton = abilityContainer and abilityContainer:FindFirstChild("Block")
-        if not blockButton then return end
-        local customHitbox = CustomHitboxes[animType:lower()] or CustomHitboxes[killer.Name:lower()]
-        task.spawn(function()
-            for i = 1, 12 do
-                if not AutoBlockEnabled then break end
-                if not queryHitbox or not queryHitbox.Parent then break end
-                if not localQueryHitbox or not localQueryHitbox.Parent then break end
-                SelfParams.FilterDescendantsInstances = {localQueryHitbox}
-                local part = Instance.new("Part")
-                part.Name = "KillerDetectHitbox"
-                part.Color = BrickColor.new("Really black").Color
-                part.Size = (customHitbox and customHitbox.Size or Vector3.new(5.2, 6, 5.65)) * 2.2
-                part.CFrame = queryHitbox.CFrame * (customHitbox and customHitbox.Offset or CFrame.new(0,0,-3.5))
-                part.CanCollide = false
-                part.Anchored = true
-                part.CastShadow = false
-                part.Material = Enum.Material.ForceField
-                part.Transparency = (ShowHitboxesSetting and ShowHitboxesSetting.Value) and 0.1 or 1
-                part.Parent = HitboxesFolder
-                Debris:AddItem(part, 0.4)
-                local hit = Workspace:GetPartsInPart(part, SelfParams)
-                if #hit > 0 then
-                    if FireSignal then pcall(function() FireSignal(blockButton.MouseButton1Click) end) end
-                    if UseActorAbilityRemote then
-                        pcall(function() UseActorAbilityRemote:FireServer("UseActorAbility", {"Block"}) end)
-                    end
-                    break
-                end
-                task.wait(0.02)
-            end
-        end)
-    end)
-end
-if KillersFolder then
-    KillersFolder.ChildAdded:Connect(HandleKiller)
-    for _, k in ipairs(KillersFolder:GetChildren()) do HandleKiller(k) end
-end
-
 local BlockLeft = Tabs.Block:AddLeftGroupbox("Auto Block", "shield")
-BlockLeft:AddToggle("AutoBlockToggle", { Text = "Auto Block", Default = false, Callback = function(state)
-    AutoBlockEnabled = state
-end })
 local BlockRight = Tabs.Block:AddRightGroupbox("Info", "info")
 BlockRight:AddLabel("Requires good ping to work properly.")
+
+local ABSoundIds = {
+    ["rbxassetid://101199185291628"] = true,
+    ["rbxassetid://101553872555606"] = true,
+    ["rbxassetid://101698569375359"] = true,
+    ["rbxassetid://104910828105172"] = true,
+    ["rbxassetid://105204810054381"] = true,
+    ["rbxassetid://105516183226360"] = true,
+    ["rbxassetid://105840448036441"] = true,
+    ["rbxassetid://106836941416453"] = true,
+    ["rbxassetid://107444859834748"] = true,
+    ["rbxassetid://108610718831698"] = true,
+    ["rbxassetid://108651070773439"] = true,
+    ["rbxassetid://108907358619313"] = true,
+    ["rbxassetid://109348678063422"] = true,
+    ["rbxassetid://109570290393196"] = true,
+    ["rbxassetid://112809109188560"] = true,
+    ["rbxassetid://113413858159336"] = true,
+    ["rbxassetid://114742322778642"] = true,
+    ["rbxassetid://115026634746636"] = true,
+    ["rbxassetid://115678417928765"] = true,
+    ["rbxassetid://116468089135195"] = true,
+    ["rbxassetid://116581754553533"] = true,
+    ["rbxassetid://117173212095661"] = true,
+    ["rbxassetid://117231507259853"] = true,
+    ["rbxassetid://118562842802948"] = true,
+    ["rbxassetid://119583605486352"] = true,
+    ["rbxassetid://119664480754070"] = true,
+    ["rbxassetid://119942598489800"] = true,
+    ["rbxassetid://120749612844426"] = true,
+    ["rbxassetid://121954639447247"] = true,
+    ["rbxassetid://12222216"] = true,
+    ["rbxassetid://123835423223220"] = true,
+    ["rbxassetid://123923371062204"] = true,
+    ["rbxassetid://124234993291213"] = true,
+    ["rbxassetid://124903763333174"] = true,
+    ["rbxassetid://125213046326879"] = true,
+    ["rbxassetid://127557531826290"] = true,
+    ["rbxassetid://128195973631079"] = true,
+    ["rbxassetid://128367348686124"] = true,
+    ["rbxassetid://128856426573270"] = true,
+    ["rbxassetid://131123355704017"] = true,
+    ["rbxassetid://131406927389838"] = true,
+    ["rbxassetid://132581672170205"] = true,
+    ["rbxassetid://133709029886490"] = true,
+    ["rbxassetid://135319730390518"] = true,
+    ["rbxassetid://136323728355613"] = true,
+    ["rbxassetid://137809737339569"] = true,
+    ["rbxassetid://139996647355899"] = true,
+    ["rbxassetid://140242176732868"] = true,
+    ["rbxassetid://18511965048"] = true,
+    ["rbxassetid://70739368096233"] = true,
+    ["rbxassetid://71805956520207"] = true,
+    ["rbxassetid://73662192846371"] = true,
+    ["rbxassetid://74809026448465"] = true,
+    ["rbxassetid://74842815979546"] = true,
+    ["rbxassetid://75330693422988"] = true,
+    ["rbxassetid://79391273191671"] = true,
+    ["rbxassetid://79980897195554"] = true,
+    ["rbxassetid://80516583309685"] = true,
+    ["rbxassetid://82221759983649"] = true,
+    ["rbxassetid://84307400688050"] = true,
+    ["rbxassetid://85853080745515"] = true,
+    ["rbxassetid://86174610237192"] = true,
+    ["rbxassetid://88589682639517"] = true,
+    ["rbxassetid://89004992452376"] = true,
+    ["rbxassetid://94317217837143"] = true,
+    ["rbxassetid://95079963655241"] = true,
+    ["rbxassetid://96117920303138"] = true,
+    ["rbxassetid://96594507550917"] = true,
+    ["rbxassetid://98111231282218"] = true,
+    ["rbxassetid://98675142200448"] = true,
+    ["rbxassetid://98733709078792"] = true,
+    ["rbxassetid://98742773509325"] = true,
+    ["rbxassetid://99856718263455"] = true
+}
+local ABEnabled = false
+local ABRange = 15
+local ABFaceCheck = false
+local ABDot = 0.5
+local ABSoundStates = {}
+local ABTriggered = {}
+local ABRemote = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Network"):WaitForChild("Network"):WaitForChild("RemoteEvent")
+
+BlockLeft:AddToggle("GuestAB", { Text = "Auto Block", Default = false, Callback = function(v)
+    ABEnabled = v
+    if v then
+        task.spawn(function()
+            while ABEnabled do
+                local Character = LP.Character
+                local root = Character and Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local Killers = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
+                    if Killers then
+                        for _, child in ipairs(Killers:GetChildren()) do
+                            if child:IsA("Model") then
+                                local hrp = child:FindFirstChild("HumanoidRootPart")
+                                for _, d in ipairs(child:GetDescendants()) do
+                                    if d:IsA("Sound") and ABSoundIds[d.SoundId] then
+                                        local inRange = hrp and (root.Position - hrp.Position).Magnitude <= ABRange
+                                        if d.IsPlaying then
+                                            if ABFaceCheck and inRange and hrp then
+                                                local unit = (root.Position - hrp.Position).Unit
+                                                inRange = hrp.CFrame.LookVector:Dot(unit) > ABDot
+                                            end
+                                            if ABSoundStates[d] == nil then ABSoundStates[d] = not inRange end
+                                            if inRange and not ABSoundStates[d] and not ABTriggered[d] then
+                                                ABTriggered[d] = true
+                                                ABRemote:FireServer("UseActorAbility", { "Block" })
+                                            end
+                                            break
+                                        end
+                                        ABSoundStates[d] = nil
+                                        ABTriggered[d] = nil
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                task.wait(0.1)
+            end
+        end)
+    end
+end })
+BlockLeft:AddInput("GuestABRange", { Text = "Range", Default = "15", Placeholder = "15", Numeric = true, Finished = true, Callback = function(v) local n = tonumber(v); if n and n > 0 then ABRange = n end end })
+BlockLeft:AddToggle("GuestABFace", { Text = "Facing Check", Default = false, Callback = function(v) ABFaceCheck = v end })
+BlockLeft:AddInput("GuestABDot", { Text = "Dot", Default = "0.5", Placeholder = "0.5", Numeric = true, Finished = true, Callback = function(v) local n = tonumber(v); if n and n >= -1 and n <= 1 then ABDot = n end end })
+
+local APSoundIds = {
+    ["rbxassetid://102808968188291"] = true,
+    ["rbxassetid://114975236395509"] = true,
+    ["rbxassetid://116616310968045"] = true,
+    ["rbxassetid://117828699507982"] = true,
+    ["rbxassetid://120902177402976"] = true,
+    ["rbxassetid://123825742002486"] = true,
+    ["rbxassetid://125854302746190"] = true,
+    ["rbxassetid://132298811847315"] = true,
+    ["rbxassetid://135209101640984"] = true,
+    ["rbxassetid://18568553101"] = true,
+    ["rbxassetid://423041300"] = true,
+    ["rbxassetid://423041325"] = true,
+    ["rbxassetid://423041356"] = true,
+    ["rbxassetid://81114852524420"] = true,
+    ["rbxassetid://82772022662025"] = true,
+    ["rbxassetid://86208973578215"] = true,
+    ["rbxassetid://91165993312513"] = true,
+    ["rbxassetid://95135835034592"] = true
+}
+local APEnabled = false
+local APDelay = 0.5
+BlockLeft:AddToggle("GuestAP", { Text = "Auto Parry", Default = false, Callback = function(v)
+    APEnabled = v
+    if v then
+        task.spawn(function()
+            while APEnabled do
+                local Character = LP.Character
+                if Character then
+                    for _, d in ipairs(Character:GetDescendants()) do
+                        if d:IsA("Sound") and d.IsPlaying and APSoundIds[d.SoundId] then
+                            task.wait(APDelay)
+                            if APEnabled and d.IsPlaying then
+                                ABRemote:FireServer("UseActorAbility", { "Punch" })
+                            end
+                            task.wait(0.3)
+                            break
+                        end
+                    end
+                end
+                task.wait(0.05)
+            end
+        end)
+    end
+end })
+BlockLeft:AddInput("GuestAPDelay", { Text = "Delay", Default = "0.5", Placeholder = "0.5", Numeric = true, Finished = true, Callback = function(v) local n = tonumber(v); if n and n >= 0 then APDelay = n end end })
+
+local PunchAimAnimIds = {
+    ["rbxassetid://108807732150251"] = true,
+    ["rbxassetid://111270184603402"] = true,
+    ["rbxassetid://113936304594883"] = true,
+    ["rbxassetid://119850211147676"] = true,
+    ["rbxassetid://129843313690921"] = true,
+    ["rbxassetid://136007065400978"] = true,
+    ["rbxassetid://140703210927645"] = true,
+    ["rbxassetid://71190646367497"] = true,
+    ["rbxassetid://78440860685556"] = true,
+    ["rbxassetid://81905101227053"] = true,
+    ["rbxassetid://82137285150006"] = true,
+    ["rbxassetid://86096387000557"] = true,
+    ["rbxassetid://86709774283672"] = true,
+    ["rbxassetid://87259391926321"] = true,
+    ["rbxassetid://91794561199608"] = true,
+    ["rbxassetid://99422325754526"] = true
+}
+local PunchAimEnabled = false
+local PunchAimDistance = 4
+BlockLeft:AddToggle("GuestPunchAim", { Text = "Punch Aim", Default = false, Callback = function(v)
+    PunchAimEnabled = v
+    if v then
+        task.spawn(function()
+            while PunchAimEnabled do
+                local Character = LP.Character
+                local hum = Character and Character:FindFirstChildOfClass("Humanoid")
+                local root = Character and Character:FindFirstChild("HumanoidRootPart")
+                if hum and root then
+                    for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                        local anim = track.Animation
+                        if anim and PunchAimAnimIds[anim.AnimationId] then
+                            local Killers = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
+                            if Killers then
+                                local target = nil
+                                local nearest = 1e999
+                                for _, k in ipairs(Killers:GetChildren()) do
+                                    local hrp = k:FindFirstChild("HumanoidRootPart")
+                                    if hrp then
+                                        local dist = (root.Position - hrp.Position).Magnitude
+                                        if dist < nearest then nearest = dist; target = hrp end
+                                    end
+                                end
+                                if target then
+                                    local autoRot = hum.AutoRotate
+                                    hum.AutoRotate = false
+                                    local endTime = tick() + 0.5
+                                    while endTime > tick() and PunchAimEnabled do
+                                        local parent = target.Parent
+                                        local targetHum = parent and parent:FindFirstChildOfClass("Humanoid")
+                                        if targetHum then
+                                            local pos = target.Position + targetHum.MoveDirection * PunchAimDistance
+                                            root.CFrame = CFrame.lookAt(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z))
+                                        end
+                                        task.wait()
+                                    end
+                                    hum.AutoRotate = autoRot
+                                end
+                            end
+                            break
+                        end
+                    end
+                end
+                task.wait(0.03)
+            end
+        end)
+    end
+end })
+BlockLeft:AddInput("GuestPunchPred", { Text = "Prediction", Default = "4", Placeholder = "4", Numeric = true, Finished = true, Callback = function(v) local n = tonumber(v); if n and n >= 0 then PunchAimDistance = n end end })
 
 local TARGET_ANIMATION_ID = "100725497418533"
 local DASHSTAB_ANIM_ID = "89448354637442"
